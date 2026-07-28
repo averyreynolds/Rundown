@@ -72,7 +72,7 @@ Rundown exists to cater towards investors who are engaged but time-constrained. 
  
 ## License
  
-Released under the [MIT License](LICENSE). Copyright © 2026 [Avery Reynolds].
+Released under the [MIT License](LICENSE). Copyright © 2026 averyreynolds
  
 ---
  
