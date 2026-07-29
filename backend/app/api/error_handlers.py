@@ -13,9 +13,7 @@ from fastapi.responses import JSONResponse
 from app.services.errors import ProviderNotFoundError, ProviderUnavailableError
 
 
-async def _handle_provider_unavailable(
-    _request: Request, exc: Exception
-) -> JSONResponse:
+async def _handle_provider_unavailable(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_502_BAD_GATEWAY, content={"detail": str(exc)})
 
 

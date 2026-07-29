@@ -50,6 +50,4 @@ class FundamentalsSnapshot(BaseModel):
     net_profit_margin: Decimal | None = None
     return_on_equity_ttm: Decimal | None = Field(default=None, alias="returnOnEquityTTM")
     revenue_per_share_ttm: Decimal | None = Field(default=None, alias="revenuePerShareTTM")
-    net_income_per_share_ttm: Decimal | None = Field(
-        default=None, alias="netIncomePerShareTTM"
-    )
+    net_income_per_share_ttm: Decimal | None = Field(default=None, alias="netIncomePerShareTTM")

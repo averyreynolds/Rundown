@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cache.cache_repository import CacheRepository
 from app.core.config import Settings, get_settings
 from app.db.session import get_session
+from app.services.edgar_service import EdgarService
+from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
 
 _BEARER_PREFIX = "Bearer "
@@ -83,3 +85,16 @@ def get_fmp_service(
 ) -> FmpService:
     """Build an `FmpService` from the shared client and a request-scoped cache."""
     return FmpService(client=client, cache=cache)
+
+
+def get_edgar_client(request: Request) -> httpx.AsyncClient:
+    """Return the shared EDGAR `httpx.AsyncClient` (SEC's `User-Agent` baked in at construction)."""
+    return request.app.state.edgar_client  # type: ignore[no-any-return]
+
+
+def get_edgar_service(
+    client: Annotated[httpx.AsyncClient, Depends(get_edgar_client)],
+    cache: Annotated[CacheRepository, Depends(get_cache_repository)],
+) -> EdgarService:
+    """Build an `EdgarService` from the shared client and a request-scoped cache."""
+    return EdgarService(client=client, cache=cache)

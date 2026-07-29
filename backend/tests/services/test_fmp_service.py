@@ -42,9 +42,7 @@ async def test_get_fundamentals_returns_sourced_snapshot(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     respx.get(_RATIOS_URL).mock(return_value=httpx.Response(200, json=_ratios_payload()))
-    respx.get(_KEY_METRICS_URL).mock(
-        return_value=httpx.Response(200, json=_key_metrics_payload())
-    )
+    respx.get(_KEY_METRICS_URL).mock(return_value=httpx.Response(200, json=_key_metrics_payload()))
 
     async with db_session_factory() as session:
         result = await FmpService(client=client, cache=CacheRepository(session)).get_fundamentals(
@@ -90,9 +88,7 @@ async def test_provider_error_with_no_cache_raises_provider_unavailable(
 
     async with db_session_factory() as session:
         with pytest.raises(ProviderUnavailableError):
-            await FmpService(client=client, cache=CacheRepository(session)).get_fundamentals(
-                "AAPL"
-            )
+            await FmpService(client=client, cache=CacheRepository(session)).get_fundamentals("AAPL")
 
 
 @respx.mock

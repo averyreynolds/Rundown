@@ -81,9 +81,7 @@ class CacheRepository:
             return None
         return result.payload
 
-    async def get_even_if_expired(
-        self, provider: str, cache_key: str
-    ) -> CacheReadResult | None:
+    async def get_even_if_expired(self, provider: str, cache_key: str) -> CacheReadResult | None:
         """Return the cached entry regardless of expiry, or `None` if never written.
 
         Used for the stale-fallback pattern: on a provider failure, a
