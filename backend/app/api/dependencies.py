@@ -1,11 +1,25 @@
-"""Request-scoped dependencies shared across API routers."""
+"""Request-scoped dependencies shared across API routers.
+
+Each `get_<provider>_service` factory is a thin adapter wiring a
+request-scoped `CacheRepository` (bound to this request's DB session) and
+the lifespan-shared provider client into that provider's service class.
+Scheduler jobs (U9) can't use these -- there's no request to inject
+through -- so they construct the same service classes directly from the
+same constructors instead; this module is a convenience layer over those
+constructors, not the only way to build them.
+"""
 
 import hmac
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+import httpx
+from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cache.cache_repository import CacheRepository
 from app.core.config import Settings, get_settings
+from app.db.session import get_session
+from app.services.fmp_service import FmpService
 
 _BEARER_PREFIX = "Bearer "
 
@@ -45,3 +59,27 @@ def require_api_token(
             detail="Invalid API bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def get_cache_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CacheRepository:
+    """Build a `CacheRepository` bound to the current request's DB session.
+
+    Shared by every provider service (FMP now; EDGAR/Finnhub/SnapTrade
+    next) so none of them constructs its own ad-hoc cache access.
+    """
+    return CacheRepository(session)
+
+
+def get_fmp_client(request: Request) -> httpx.AsyncClient:
+    """Return the shared FMP `httpx.AsyncClient` the lifespan constructed at startup."""
+    return request.app.state.fmp_client  # type: ignore[no-any-return]
+
+
+def get_fmp_service(
+    client: Annotated[httpx.AsyncClient, Depends(get_fmp_client)],
+    cache: Annotated[CacheRepository, Depends(get_cache_repository)],
+) -> FmpService:
+    """Build an `FmpService` from the shared client and a request-scoped cache."""
+    return FmpService(client=client, cache=cache)

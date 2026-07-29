@@ -17,14 +17,15 @@ that a *specific* secret was scrubbed, not just that redaction ran at all.
 """
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.db.session import create_engine, create_session_factory, init_models
+from app.db.session import create_engine, create_session_factory, get_session, init_models
 
 PLACEHOLDER_ENV: dict[str, str] = {
     "SNAPTRADE_CLIENT_ID": "test-snaptrade-client-id-placeholder",
@@ -37,6 +38,11 @@ PLACEHOLDER_ENV: dict[str, str] = {
 }
 
 os.environ.update(PLACEHOLDER_ENV)
+
+# Imported only after the env vars above are set: `app.main`'s module-level
+# `app = create_app()` calls `get_settings()` at *import* time, so this
+# import must not happen until the required env vars already exist.
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture
@@ -72,3 +78,32 @@ async def db_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
 def db_session_factory(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     """Session factory bound to `db_engine`, for tests needing one or more sessions."""
     return create_session_factory(db_engine)
+
+
+@pytest.fixture
+def api_client(db_session_factory: async_sessionmaker[AsyncSession]) -> Iterator[TestClient]:
+    """A `TestClient` for the real `app`, with per-test DB isolation.
+
+    Every router-level test should use this instead of constructing its
+    own `TestClient(app)`, for two reasons:
+
+    1. Starlette's `TestClient` only runs the FastAPI lifespan -- which
+       constructs `app.state.fmp_client` and friends -- inside a `with`
+       block; a bare `TestClient(app)` skips startup entirely and every
+       provider-backed route would fail with an `AttributeError`.
+    2. The lifespan's own engine always points at `settings.database_url`
+       (the real dev DB path), shared across every test in the suite.
+       Without overriding `get_session` to redirect to an isolated temp
+       file per test, one test's cached value (e.g. a successful FMP
+       fetch for AAPL) would leak into a later test expecting a cold
+       cache for the same symbol, making router tests order-dependent.
+    """
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        async with db_session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = _override_get_session
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.pop(get_session, None)

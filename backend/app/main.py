@@ -7,27 +7,32 @@ bottom of this file is what `uvicorn app.main:app` finds and serves.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.dependencies import require_api_token
-from app.api.routers import health
+from app.api.error_handlers import register_error_handlers
+from app.api.routers import fundamentals, health
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import create_engine, create_session_factory, init_models
+
+_FMP_BASE_URL = "https://financialmodelingprep.com"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application startup/shutdown.
 
-    U1 wired up settings + logging. U3 adds the DB engine below. Later
-    units extend this same function to construct further shared resources
-    on startup and tear them down (in reverse order) on shutdown:
+    U1 wired up settings + logging; U3 added the DB engine; U5 adds the
+    shared FMP `httpx.AsyncClient` below. Later units extend this same
+    function to construct further shared resources on startup and tear
+    them down (in reverse order) on shutdown:
 
-      - U4/U5/U6/U7/U8: construct one long-lived shared `httpx.AsyncClient`
-        (or SDK client) per provider -- SnapTrade, FMP, EDGAR, Finnhub,
-        Anthropic -- and store each on `app.state`.
+      - U4/U6/U7/U8: construct one long-lived shared `httpx.AsyncClient`
+        (or SDK client) per remaining provider -- SnapTrade, EDGAR,
+        Finnhub, Anthropic -- and store each on `app.state`.
       - U9: start APScheduler's `AsyncIOScheduler` *after* the resources
         above are ready; on shutdown, stop the scheduler *first* (waiting
         for any in-flight job) *before* disposing the DB engine or closing
@@ -41,11 +46,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_models(engine)
     app.state.session_factory = create_session_factory(engine)
 
+    # One long-lived client per provider, per the Key Technical Decision on
+    # shared clients: the API key is a default query param here, not
+    # repeated (or accidentally omitted) at every call site.
+    app.state.fmp_client = httpx.AsyncClient(
+        base_url=_FMP_BASE_URL,
+        params={"apikey": settings.fmp_api_key.get_secret_value()},
+    )
+
     yield
 
     # Teardown is the reverse of startup. Once U9's scheduler exists, its
-    # shutdown must be awaited *before* this dispose() call, so an
-    # in-flight job never touches an already-closed engine.
+    # shutdown must be awaited *before* the client/engine below are torn
+    # down, so an in-flight job never touches an already-closed resource.
+    await app.state.fmp_client.aclose()
     await engine.dispose()
 
 
@@ -74,6 +88,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    register_error_handlers(app)
+
     # `/health` is registered directly on `app` -- deliberately exempt from
     # the bearer-token gate as an unauthenticated liveness probe. FastAPI's
     # own `/docs`, `/openapi.json`, and `/redoc` are exempt by construction:
@@ -86,8 +102,8 @@ def create_app() -> FastAPI:
     # defense-in-depth, not a substitute for it). Later units add their
     # router here, e.g.:
     #   protected_router.include_router(portfolio.router)
-    #   protected_router.include_router(fundamentals.router)
     protected_router = APIRouter(dependencies=[Depends(require_api_token)])
+    protected_router.include_router(fundamentals.router)
     app.include_router(protected_router)
 
     return app
