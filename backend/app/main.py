@@ -14,19 +14,17 @@ from app.api.dependencies import require_api_token
 from app.api.routers import health
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.db.session import create_engine, create_session_factory, init_models
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application startup/shutdown.
 
-    U1: only settings + logging are wired up here. Later units extend this
-    same function to construct shared resources on startup and tear them
-    down (in reverse order) on shutdown:
+    U1 wired up settings + logging. U3 adds the DB engine below. Later
+    units extend this same function to construct further shared resources
+    on startup and tear them down (in reverse order) on shutdown:
 
-      - U3: create the SQLAlchemy async engine and call
-        `Base.metadata.create_all()`, store the session factory on
-        `app.state`.
       - U4/U5/U6/U7/U8: construct one long-lived shared `httpx.AsyncClient`
         (or SDK client) per provider -- SnapTrade, FMP, EDGAR, Finnhub,
         Anthropic -- and store each on `app.state`.
@@ -38,9 +36,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     settings = get_settings()
     configure_logging(settings.secret_values(), log_level=settings.log_level)
+
+    engine = create_engine(settings.database_url)
+    await init_models(engine)
+    app.state.session_factory = create_session_factory(engine)
+
     yield
-    # Teardown placeholder: reverse of the startup list above, once those
-    # resources exist. Nothing to tear down yet in U1.
+
+    # Teardown is the reverse of startup. Once U9's scheduler exists, its
+    # shutdown must be awaited *before* this dispose() call, so an
+    # in-flight job never touches an already-closed engine.
+    await engine.dispose()
 
 
 def create_app() -> FastAPI:
