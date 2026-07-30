@@ -1,39 +1,23 @@
 """Integration tests for `/portfolio/*`.
 
 On top of the shared `api_client` fixture's `get_session` override (see
-`conftest.py`), these tests also override `get_snaptrade_client` so the
-route never touches the real lifespan-constructed SnapTrade SDK client,
-which would otherwise attempt a live network call.
+`conftest.py`), these tests use `set_fake_snaptrade_client` (see
+`tests/api/conftest.py`) so the route never touches the real
+lifespan-constructed SnapTrade SDK client, which would otherwise attempt
+a live network call.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 from snaptrade_client.exceptions_base import OpenApiException
 
-from app.api.dependencies import get_snaptrade_client
-from app.main import app
 from tests.fixtures.synthetic_positions import (
-    build_fake_snaptrade_client,
     synthetic_account,
     synthetic_balance,
     synthetic_stock_position,
 )
-
-
-@pytest.fixture
-def set_fake_snaptrade_client() -> Iterator[Callable[..., Any]]:
-    """Override `get_snaptrade_client` for this test only, cleaned up after."""
-
-    def _set(**kwargs: Any) -> Any:  # noqa: ANN401
-        client = build_fake_snaptrade_client(**kwargs)
-        app.dependency_overrides[get_snaptrade_client] = lambda: client
-        return client
-
-    yield _set
-    app.dependency_overrides.pop(get_snaptrade_client, None)
 
 
 def test_connect_with_valid_token_returns_portal_url(
