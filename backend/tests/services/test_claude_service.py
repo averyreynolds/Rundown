@@ -64,9 +64,9 @@ async def _build_claude_service(
     sequentially, never concurrently, so one shared session/cache is fine
     for the lifetime of a single `chat()` call in these tests.
 
-    Personal-key flow: credentials are passed directly; no `connect()` call
-    needed before `list_positions()` is usable.  Pass `positions=[]` to
-    simulate no brokerage data being available.
+    Personal-key flow: auth uses only clientId/consumerKey baked into the
+    SDK client; no `connect()` call is needed before `list_positions()`.
+    Pass `positions=[]` to simulate no brokerage data being available.
     """
     cache = CacheRepository(session)
     snaptrade_client = build_fake_snaptrade_client(
@@ -74,12 +74,7 @@ async def _build_claude_service(
         balance=synthetic_balance(),
         positions=positions if positions is not None else [synthetic_stock_position()],
     )
-    snaptrade_service = SnapTradeService(
-        client=snaptrade_client,
-        cache=cache,
-        user_id="test-user-id",
-        user_secret="test-user-secret",  # noqa: S106
-    )
+    snaptrade_service = SnapTradeService(client=snaptrade_client, cache=cache)
 
     return ClaudeService(
         client=anthropic_client,  # type: ignore[arg-type]

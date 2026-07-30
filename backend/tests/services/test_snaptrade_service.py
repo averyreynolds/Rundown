@@ -5,8 +5,8 @@ The SnapTrade SDK client is a fake built by
 suite never touches the live network or the real SDK's `aiohttp`-based
 transport.
 
-Personal-key flow: `SnapTradeService` takes `user_id`/`user_secret`
-directly at construction time (no DB row; no `registerUser` call).
+Personal-key flow: auth uses only clientId/consumerKey baked into the SDK
+client at construction; no per-user userId/userSecret is needed or stored.
 """
 
 import asyncio
@@ -27,23 +27,9 @@ from tests.fixtures.synthetic_positions import (
     synthetic_stock_position,
 )
 
-_USER_ID = "test-user-id"
-_USER_SECRET = "test-user-secret"  # noqa: S105
 
-
-def _make_service(
-    client: object,
-    session: AsyncSession,
-    *,
-    user_id: str = _USER_ID,
-    user_secret: str = _USER_SECRET,
-) -> SnapTradeService:
-    return SnapTradeService(
-        client=client,
-        cache=CacheRepository(session),
-        user_id=user_id,
-        user_secret=user_secret,
-    )
+def _make_service(client: object, session: AsyncSession) -> SnapTradeService:
+    return SnapTradeService(client=client, cache=CacheRepository(session))
 
 
 async def test_connect_returns_portal_url(
@@ -59,19 +45,19 @@ async def test_connect_returns_portal_url(
     assert client.authentication.alogin_snap_trade_user.call_count == 1
 
 
-async def test_connect_passes_user_credentials_and_read_scope(
+async def test_connect_requests_read_only_scope(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """Personal-key connect must always request a read-only consent scope."""
     client = build_fake_snaptrade_client()
 
     async with db_session_factory() as session:
-        service = _make_service(client, session, user_id="my-uid", user_secret="my-secret")
-        await service.connect()
+        await _make_service(client, session).connect()
 
     call_kwargs = client.authentication.alogin_snap_trade_user.call_args.kwargs
-    assert call_kwargs["user_id"] == "my-uid"
-    assert call_kwargs["user_secret"] == "my-secret"
     assert call_kwargs["connection_type"] == "read"
+    assert "user_id" not in call_kwargs
+    assert "user_secret" not in call_kwargs
 
 
 async def test_connect_each_call_hits_login_endpoint(

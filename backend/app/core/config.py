@@ -40,11 +40,6 @@ class Settings(BaseSettings):
     # --- Required secrets: no default. Missing env var => ValidationError. ---
     snaptrade_client_id: SecretStr
     snaptrade_consumer_key: SecretStr
-    # Personal-tier SnapTrade keys come with a pre-provisioned userId /
-    # userSecret for the account owner (no registerUser call needed).
-    # Find both values in your SnapTrade personal dashboard.
-    snaptrade_user_id: SecretStr
-    snaptrade_user_secret: SecretStr
     fmp_api_key: SecretStr
     finnhub_api_key: SecretStr
     anthropic_api_key: SecretStr
@@ -81,8 +76,6 @@ class Settings(BaseSettings):
         return [
             self.snaptrade_client_id.get_secret_value(),
             self.snaptrade_consumer_key.get_secret_value(),
-            self.snaptrade_user_id.get_secret_value(),
-            self.snaptrade_user_secret.get_secret_value(),
             self.fmp_api_key.get_secret_value(),
             self.finnhub_api_key.get_secret_value(),
             self.anthropic_api_key.get_secret_value(),

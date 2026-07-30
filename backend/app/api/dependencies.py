@@ -128,19 +128,13 @@ def get_snaptrade_client(request: Request) -> Any:  # noqa: ANN401
 def get_snaptrade_service(
     client: Annotated[Any, Depends(get_snaptrade_client)],  # noqa: ANN401
     cache: Annotated[CacheRepository, Depends(get_cache_repository)],
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> SnapTradeService:
-    """Build a `SnapTradeService` from the shared client, cache, and personal-key credentials.
+    """Build a `SnapTradeService` from the shared client and a request-scoped cache.
 
-    Personal-key userId/userSecret come from settings (pre-provisioned by
-    SnapTrade at signup), not from a DB row -- no session parameter needed.
+    Personal-key auth uses only clientId/consumerKey (baked into the SDK
+    client at lifespan startup) -- no per-user userId/userSecret is needed.
     """
-    return SnapTradeService(
-        client=client,
-        cache=cache,
-        user_id=settings.snaptrade_user_id.get_secret_value(),
-        user_secret=settings.snaptrade_user_secret.get_secret_value(),
-    )
+    return SnapTradeService(client=client, cache=cache)
 
 
 def get_claude_client(request: Request) -> AsyncAnthropic:

@@ -15,11 +15,14 @@ verified here -- treat the code-level import restriction above as the
 guarantee that's actually enforced.
 
 **Personal-key auth flow.**  This app uses a SnapTrade *personal* API key
-(not the commercial/partner key).  Personal keys come with a userId and
-userSecret pre-provisioned for the account owner at signup -- the
+(not the commercial/partner key).  The SDK client is constructed with
+`auth=SnapTradeAuth.personal_api_key(client_id=..., consumer_key=...)`
+so that `request_after_hook` sets `auth_mode = "personalApiKey"` and
+attaches the HMAC `Signature` header.  The SDK's `personalApiKey` mode
+uses `["PersonalClientId", "PersonalTimestamp"]` auth schemes -- no
+per-user `userId`/`userSecret` is needed for personal keys.  The
 `registerUser` endpoint (partner-only, code 1012) is neither called nor
-imported.  Credentials come from `.env` via `Settings` and are passed in
-at construction time; no DB row is written or read for authentication.
+imported; no DB row is written or read for authentication.
 
 The SDK client must be constructed with
 `auth=SnapTradeAuth.personal_api_key(...)` so that `request_after_hook`
@@ -86,10 +89,6 @@ class SnapTradeService:
     methods open a fresh `aiohttp` session per call rather than holding
     one open (see the SDK's `rest.py`).
 
-    `user_id` / `user_secret` are the personal-key account owner's
-    pre-provisioned SnapTrade credentials, sourced from `Settings` and
-    passed in at construction time rather than looked up in the DB.
-
     Typed as `Any` here rather than `SnapTrade[Any]`: the installed
     `snaptrade-python-sdk`'s generated, multiply-inherited API classes
     don't resolve their own methods under mypy strict mode even though
@@ -103,13 +102,9 @@ class SnapTradeService:
         self,
         client: Any,  # noqa: ANN401
         cache: CacheRepository,
-        user_id: str,
-        user_secret: str,
     ) -> None:
         self._client = client
         self._cache = cache
-        self._user_id = user_id
-        self._user_secret = user_secret
 
     async def connect(self) -> str:
         """Return a fresh read-only Connection Portal URL for this personal-key user.
@@ -122,8 +117,6 @@ class SnapTradeService:
         """
         try:
             response = await self._client.authentication.alogin_snap_trade_user(
-                user_id=self._user_id,
-                user_secret=self._user_secret,
                 connection_type="read",
             )
         except OpenApiException as exc:
@@ -239,10 +232,7 @@ class SnapTradeService:
 
     async def _fetch_accounts_live(self) -> list[dict[str, Any]]:
         try:
-            response = await self._client.account_information.alist_user_accounts(
-                user_id=self._user_id,
-                user_secret=self._user_secret,
-            )
+            response = await self._client.account_information.alist_user_accounts()
         except OpenApiException as exc:
             raise ProviderFetchError("SnapTrade list_user_accounts failed") from exc
         return [dict(account) for account in response.body]
@@ -261,8 +251,6 @@ class SnapTradeService:
         try:
             response = await self._client.account_information.aget_user_account_balance(
                 account_id=account_id,
-                user_id=self._user_id,
-                user_secret=self._user_secret,
             )
         except OpenApiException as exc:
             raise ProviderFetchError(
@@ -284,8 +272,6 @@ class SnapTradeService:
         try:
             response = await self._client.account_information.aget_all_account_positions(
                 account_id=account_id,
-                user_id=self._user_id,
-                user_secret=self._user_secret,
             )
         except OpenApiException as exc:
             raise ProviderFetchError(
