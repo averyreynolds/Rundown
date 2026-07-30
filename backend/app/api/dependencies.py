@@ -13,12 +13,14 @@ import hmac
 from typing import Annotated, Any
 
 import httpx
+from anthropic import AsyncAnthropic
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cache.cache_repository import CacheRepository
 from app.core.config import Settings, get_settings
 from app.db.session import get_session
+from app.services.claude_service import ClaudeService
 from app.services.edgar_service import EdgarService
 from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
@@ -136,3 +138,31 @@ def get_snaptrade_service(
     routing it through `CacheRepository`, which owns `cache_entries` only.
     """
     return SnapTradeService(client=client, cache=cache, session=session)
+
+
+def get_claude_client(request: Request) -> AsyncAnthropic:
+    """Return the shared Anthropic `AsyncAnthropic` client the lifespan constructed at startup."""
+    return request.app.state.claude_client  # type: ignore[no-any-return]
+
+
+def get_claude_service(
+    client: Annotated[AsyncAnthropic, Depends(get_claude_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    snaptrade_service: Annotated[SnapTradeService, Depends(get_snaptrade_service)],
+    fmp_service: Annotated[FmpService, Depends(get_fmp_service)],
+    edgar_service: Annotated[EdgarService, Depends(get_edgar_service)],
+    finnhub_service: Annotated[FinnhubService, Depends(get_finnhub_service)],
+) -> ClaudeService:
+    """Build a `ClaudeService` wired to every other provider service it grounds answers in.
+
+    Model id comes from settings, never hardcoded (Key Technical
+    Decisions) -- model ids deprecate on a rolling schedule.
+    """
+    return ClaudeService(
+        client=client,
+        model_id=settings.claude_model_id,
+        snaptrade_service=snaptrade_service,
+        fmp_service=fmp_service,
+        edgar_service=edgar_service,
+        finnhub_service=finnhub_service,
+    )

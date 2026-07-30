@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
+from anthropic import AsyncAnthropic
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +16,7 @@ from snaptrade_client.client import SnapTrade
 
 from app.api.dependencies import require_api_token
 from app.api.error_handlers import register_error_handlers
-from app.api.routers import filings, fundamentals, health, news, portfolio
+from app.api.routers import advisor, filings, fundamentals, health, news, portfolio
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import create_engine, create_session_factory, init_models
@@ -32,11 +33,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     U1 wired up settings + logging; U3 added the DB engine; U5 added the
     shared FMP `httpx.AsyncClient`; U6 added the shared EDGAR client; U7
     added the shared Finnhub client; U4 added the shared SnapTrade SDK
-    client; U9 starts the scheduler below. Later units extend this same
-    function further:
-
-      - U8: construct the shared Anthropic client and store it on
-        `app.state`.
+    client; U9 starts the scheduler; U8 adds the shared Anthropic client
+    below.
 
     Teardown is the reverse of startup: the scheduler is stopped *first*
     (waiting for any in-flight job to finish) *before* the HTTP clients
@@ -79,6 +77,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         consumer_key=settings.snaptrade_consumer_key.get_secret_value(),
     )
 
+    app.state.claude_client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
+
     # Started only after every resource the jobs depend on is ready.
     # Single-process/single-worker only (`uvicorn --workers 1`): APScheduler
     # assumes one process, and a multi-worker deployment would create N
@@ -95,6 +95,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # `AsyncIOScheduler.shutdown()` is a plain sync method, not a
     # coroutine, despite the "asyncio" in its name.
     scheduler.shutdown(wait=True)
+    await app.state.claude_client.close()
     await app.state.finnhub_client.aclose()
     await app.state.edgar_client.aclose()
     await app.state.fmp_client.aclose()
@@ -143,6 +144,7 @@ def create_app() -> FastAPI:
     protected_router.include_router(fundamentals.router)
     protected_router.include_router(filings.router)
     protected_router.include_router(news.router)
+    protected_router.include_router(advisor.router)
     app.include_router(protected_router)
 
     return app

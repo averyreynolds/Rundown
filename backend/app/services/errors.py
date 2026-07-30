@@ -23,6 +23,13 @@ responses, never raw exceptions or stack traces):
 - `NotConnectedError`: no SnapTrade connection exists yet for this local
   user. Distinguishes "nothing to show yet, prompt the user to connect"
   from a provider outage -- maps to a 409 response.
+- `InsufficientContextError`: the advisor (U8) has no data to ground an
+  answer in for this request (no symbols, no connected portfolio, no
+  filing text). Maps to a 422 response -- the request is well-formed, it
+  just can't be grounded, which CLAUDE.md forbids answering anyway.
+- `AdvisorUnavailableError`: the Claude API call itself failed or timed
+  out. Maps to a 502 response; never returns a partial/garbled answer
+  that could be misread as advice.
 """
 
 
@@ -54,3 +61,15 @@ class NotConnectedError(Exception):
 
     def __init__(self) -> None:
         super().__init__("No SnapTrade connection exists yet. Call POST /portfolio/connect first.")
+
+
+class InsufficientContextError(Exception):
+    """The advisor has no data to ground an answer in for this request."""
+
+
+class AdvisorUnavailableError(Exception):
+    """The Claude API call failed or timed out."""
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(f"The advisor is temporarily unavailable: {cause}")
+        self.cause = cause

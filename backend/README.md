@@ -1,14 +1,14 @@
 # Rundown Backend
 
-FastAPI service that owns every third-party integration, portfolio math, caching, and (eventually) LLM orchestration for Rundown. See the [root README](../README.md) for the product framing. This document is the handoff artifact for a new session/person to go from a clean checkout to a running backend without reading source first.
+FastAPI service that owns every third-party integration, portfolio math, caching, and LLM orchestration for Rundown. See the [root README](../README.md) for the product framing. This document is the handoff artifact for a new session/person to go from a clean checkout to a running backend without reading source first.
 
 ---
 
 ## Current status
 
-Implemented: portfolio (SnapTrade, read-only), fundamentals (FMP), filings (SEC EDGAR), news (Finnhub), the shared cache/data layer, and the scheduled refresh/snapshot jobs.
+Every unit in the backend scaffold is implemented: portfolio (SnapTrade, read-only), fundamentals (FMP), filings (SEC EDGAR), news (Finnhub), the shared cache/data layer, the scheduled refresh/snapshot jobs, and the AI advisor (`/advisor/chat`, Claude).
 
-**Not yet implemented: the AI advisor (`/advisor/*`).** It was deliberately deferred — it's the highest legal/product-risk area (no-directive-advice boundary) and needs its own Anthropic API key and careful review before being built. Everything else in this document describes what exists today.
+The advisor is the highest legal/product-risk area in the app — see [When implementing the AI advisor specifically](../CLAUDE.md#when-implementing-the-ai-advisor-specifically) in the root `CLAUDE.md` and `app/services/claude_service.py`'s module docstring before touching it. Its no-directive-advice boundary is enforced at two layers (system prompt + an output-side lexical phrase filter); the filter's known, accepted gap is documented in *Known limitations* below.
 
 ---
 
