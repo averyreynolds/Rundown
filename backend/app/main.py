@@ -13,12 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.dependencies import require_api_token
 from app.api.error_handlers import register_error_handlers
-from app.api.routers import filings, fundamentals, health
+from app.api.routers import filings, fundamentals, health, news
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import create_engine, create_session_factory, init_models
 
 _FMP_BASE_URL = "https://financialmodelingprep.com"
+_FINNHUB_BASE_URL = "https://finnhub.io"
 
 
 @asynccontextmanager
@@ -26,14 +27,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application startup/shutdown.
 
     U1 wired up settings + logging; U3 added the DB engine; U5 added the
-    shared FMP `httpx.AsyncClient`; U6 adds the shared EDGAR client below.
-    Later units extend this same function to construct further shared
-    resources on startup and tear them down (in reverse order) on
-    shutdown:
+    shared FMP `httpx.AsyncClient`; U6 added the shared EDGAR client; U7
+    adds the shared Finnhub client below. Later units extend this same
+    function to construct further shared resources on startup and tear
+    them down (in reverse order) on shutdown:
 
-      - U4/U7/U8: construct one long-lived shared `httpx.AsyncClient` (or
-        SDK client) per remaining provider -- SnapTrade, Finnhub,
-        Anthropic -- and store each on `app.state`.
+      - U4/U8: construct one long-lived shared `httpx.AsyncClient` (or SDK
+        client) per remaining provider -- SnapTrade, Anthropic -- and
+        store each on `app.state`.
       - U9: start APScheduler's `AsyncIOScheduler` *after* the resources
         above are ready; on shutdown, stop the scheduler *first* (waiting
         for any in-flight job) *before* disposing the DB engine or closing
@@ -63,11 +64,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         headers={"User-Agent": settings.sec_edgar_user_agent},
     )
 
+    app.state.finnhub_client = httpx.AsyncClient(
+        base_url=_FINNHUB_BASE_URL,
+        params={"token": settings.finnhub_api_key.get_secret_value()},
+    )
+
     yield
 
     # Teardown is the reverse of startup. Once U9's scheduler exists, its
     # shutdown must be awaited *before* the clients/engine below are torn
     # down, so an in-flight job never touches an already-closed resource.
+    await app.state.finnhub_client.aclose()
     await app.state.edgar_client.aclose()
     await app.state.fmp_client.aclose()
     await engine.dispose()
@@ -115,6 +122,7 @@ def create_app() -> FastAPI:
     protected_router = APIRouter(dependencies=[Depends(require_api_token)])
     protected_router.include_router(fundamentals.router)
     protected_router.include_router(filings.router)
+    protected_router.include_router(news.router)
     app.include_router(protected_router)
 
     return app

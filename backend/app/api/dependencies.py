@@ -98,3 +98,16 @@ def get_edgar_service(
 ) -> EdgarService:
     """Build an `EdgarService` from the shared client and a request-scoped cache."""
     return EdgarService(client=client, cache=cache)
+
+
+def get_finnhub_client(request: Request) -> httpx.AsyncClient:
+    """Return the shared Finnhub `httpx.AsyncClient` the lifespan constructed at startup."""
+    return request.app.state.finnhub_client  # type: ignore[no-any-return]
+
+
+def get_finnhub_service(
+    client: Annotated[httpx.AsyncClient, Depends(get_finnhub_client)],
+    cache: Annotated[CacheRepository, Depends(get_cache_repository)],
+) -> FinnhubService:
+    """Build a `FinnhubService` from the shared client and a request-scoped cache."""
+    return FinnhubService(client=client, cache=cache)
