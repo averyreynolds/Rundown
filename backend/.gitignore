@@ -1,0 +1,46 @@
+# Secrets -- never commit real credentials (CLAUDE.md hard rule 5).
+.env
+.env.*
+!.env.example
+
+# Local SQLite database files -- these hold the SnapTrade user_secret and
+# cached positions/balances; encryption-at-rest is deferred for the MVP
+# (see the backend scaffold plan's Scope Boundaries), so the file never
+# being committed or leaving the machine is the one control that deferral
+# depends on. Load-bearing, not boilerplate.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite3
+*.sqlite3-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.cache/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
