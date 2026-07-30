@@ -14,7 +14,8 @@ from typing import Annotated, Any
 
 import httpx
 from anthropic import AsyncAnthropic
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cache.cache_repository import CacheRepository
@@ -26,12 +27,14 @@ from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
 from app.services.snaptrade_service import SnapTradeService
 
-_BEARER_PREFIX = "Bearer "
+# auto_error=False so we can return a consistent 401 rather than letting
+# FastAPI's default 403 slip through when the header is absent entirely.
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def require_api_token(
     settings: Annotated[Settings, Depends(get_settings)],
-    authorization: Annotated[str | None, Header()] = None,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)] = None,
 ) -> None:
     """Gate a route behind the shared-secret bearer token.
 
@@ -42,23 +45,26 @@ def require_api_token(
     Applied to every router except ``/health``, ``/docs``, ``/openapi.json``,
     and ``/redoc``.
 
+    Using FastAPI's `HTTPBearer` (rather than a plain `Header()`) registers
+    the Bearer security scheme in the OpenAPI spec so Swagger UI's Authorize
+    button actually injects the token into requests.
+
     Raises:
         HTTPException: 401 if the ``Authorization`` header is missing,
             malformed, or does not match the configured bearer token.
     """
-    if authorization is None or not authorization.startswith(_BEARER_PREFIX):
+    if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or malformed Authorization header.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    provided_token = authorization.removeprefix(_BEARER_PREFIX)
     expected_token = settings.api_bearer_token.get_secret_value()
 
     # Constant-time comparison: an ordinary `!=` leaks timing information
     # proportional to the number of matching leading characters.
-    if not hmac.compare_digest(provided_token, expected_token):
+    if not hmac.compare_digest(credentials.credentials, expected_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API bearer token.",
