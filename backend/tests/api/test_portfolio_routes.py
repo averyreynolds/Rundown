@@ -43,16 +43,18 @@ def test_connect_without_bearer_token_returns_401(
     assert response.status_code == 401
 
 
-def test_get_positions_without_connecting_first_returns_409(
+def test_get_positions_without_any_brokerage_linked_returns_empty_list(
     api_client: TestClient,
     auth_headers: dict[str, str],
     set_fake_snaptrade_client: Callable[..., Any],
 ) -> None:
-    set_fake_snaptrade_client()
+    """Personal-key users always have credentials; no brokerage linked yet returns []."""
+    set_fake_snaptrade_client()  # default: empty accounts list
 
     response = api_client.get("/portfolio/positions", headers=auth_headers)
 
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["value"] == []
 
 
 def test_get_positions_after_connecting_returns_mapped_holdings(
@@ -77,12 +79,12 @@ def test_get_positions_after_connecting_returns_mapped_holdings(
     assert body["value"][0]["symbol"] == "AAPL"
 
 
-def test_connect_when_snaptrade_registration_fails_returns_502(
+def test_connect_when_snaptrade_login_fails_returns_502(
     api_client: TestClient,
     auth_headers: dict[str, str],
     set_fake_snaptrade_client: Callable[..., Any],
 ) -> None:
-    set_fake_snaptrade_client(register_error=OpenApiException("boom"))
+    set_fake_snaptrade_client(login_error=OpenApiException("boom"))
 
     response = api_client.post("/portfolio/connect", headers=auth_headers)
 

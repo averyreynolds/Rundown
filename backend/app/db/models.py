@@ -4,8 +4,15 @@ Two tables ship in U3: a generic `cache_entries` table (CLAUDE.md's "one
 caching module" instruction, and the Key Technical Decision to avoid
 bespoke tables per provider) and `portfolio_snapshots` (R12's minimal
 daily snapshot-write job, populated by U9's scheduled job, queried by
-nothing yet -- comparison logic is deferred follow-up work). U4 adds a
-third table, `snaptrade_connection`, to this same module.
+nothing yet -- comparison logic is deferred follow-up work).
+
+Note: an earlier iteration defined a `snaptrade_connection` table here to
+persist the userId/userSecret returned by the partner `registerUser` API.
+That table was removed when the integration was reworked to use
+SnapTrade's personal-key flow: personal-key credentials are pre-provisioned
+at signup and live in `.env`, so nothing needs persisting in the DB.
+Existing `rundown.db` files that already contain the `snaptrade_connection`
+table are unaffected (SQLAlchemy's `create_all` is additive).
 """
 
 import datetime as dt
@@ -58,19 +65,3 @@ class PortfolioSnapshot(Base):
     allocation_pct: Mapped[Decimal] = mapped_column(Numeric)
 
 
-class SnaptradeConnection(Base):
-    """This app's single local user's persisted SnapTrade connection.
-
-    A true singleton table (Key Technical Decisions): `unique=True` on
-    `user_id` means a second concurrent `connect()` call that races the
-    first's check-then-register sees a uniqueness conflict on insert,
-    which `SnapTradeService` catches and treats as "already connected"
-    rather than double-registering with SnapTrade or crashing.
-    """
-
-    __tablename__ = "snaptrade_connection"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(255), unique=True)
-    user_secret: Mapped[str] = mapped_column(String(255))
-    connected_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))

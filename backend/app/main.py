@@ -12,6 +12,7 @@ from anthropic import AsyncAnthropic
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from snaptrade_client.auth import SnapTradeAuth
 from snaptrade_client.client import SnapTrade
 
 from app.api.dependencies import require_api_token
@@ -72,9 +73,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # No `.aclose()` needed at teardown, unlike the httpx clients above:
     # the SDK's async methods open a fresh aiohttp session per call rather
     # than holding one open (see snaptrade_service.py's docstring).
+    #
+    # `personal_api_key` auth mode sets `configuration.auth_mode` so the
+    # SDK's `request_after_hook` actually attaches the HMAC `Signature`
+    # header.  Without an explicit `auth=` the mode stays None and every
+    # request silently arrives unsigned, producing a 403.
     app.state.snaptrade_client = SnapTrade(
-        client_id=settings.snaptrade_client_id.get_secret_value(),
-        consumer_key=settings.snaptrade_consumer_key.get_secret_value(),
+        auth=SnapTradeAuth.personal_api_key(
+            client_id=settings.snaptrade_client_id.get_secret_value(),
+            consumer_key=settings.snaptrade_consumer_key.get_secret_value(),
+        ),
     )
 
     app.state.claude_client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())

@@ -19,6 +19,8 @@ def test_settings_loads_with_all_required_env_vars_set() -> None:
 
     assert isinstance(settings.snaptrade_client_id, SecretStr)
     assert isinstance(settings.snaptrade_consumer_key, SecretStr)
+    assert isinstance(settings.snaptrade_user_id, SecretStr)
+    assert isinstance(settings.snaptrade_user_secret, SecretStr)
     assert isinstance(settings.fmp_api_key, SecretStr)
     assert isinstance(settings.finnhub_api_key, SecretStr)
     assert isinstance(settings.anthropic_api_key, SecretStr)
@@ -54,6 +56,8 @@ def test_settings_has_sensible_non_secret_defaults() -> None:
     [
         "SNAPTRADE_CLIENT_ID",
         "SNAPTRADE_CONSUMER_KEY",
+        "SNAPTRADE_USER_ID",
+        "SNAPTRADE_USER_SECRET",
         "FMP_API_KEY",
         "FINNHUB_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -96,3 +100,5 @@ def test_secret_values_returns_every_secret_literal() -> None:
     assert settings.finnhub_api_key.get_secret_value() in secret_values
     assert settings.snaptrade_client_id.get_secret_value() in secret_values
     assert settings.snaptrade_consumer_key.get_secret_value() in secret_values
+    assert settings.snaptrade_user_id.get_secret_value() in secret_values
+    assert settings.snaptrade_user_secret.get_secret_value() in secret_values

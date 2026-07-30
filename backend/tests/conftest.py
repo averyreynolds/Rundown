@@ -30,6 +30,8 @@ from app.db.session import create_engine, create_session_factory, get_session, i
 PLACEHOLDER_ENV: dict[str, str] = {
     "SNAPTRADE_CLIENT_ID": "test-snaptrade-client-id-placeholder",
     "SNAPTRADE_CONSUMER_KEY": "test-snaptrade-consumer-key-placeholder",
+    "SNAPTRADE_USER_ID": "test-snaptrade-user-id-placeholder",
+    "SNAPTRADE_USER_SECRET": "test-snaptrade-user-secret-placeholder",
     "FMP_API_KEY": "test-fmp-api-key-placeholder",
     "FINNHUB_API_KEY": "test-finnhub-api-key-placeholder",
     "ANTHROPIC_API_KEY": "test-anthropic-api-key-placeholder",

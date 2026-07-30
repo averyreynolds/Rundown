@@ -25,8 +25,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.cache.cache_repository import CacheRepository
+from app.core.config import get_settings
 from app.db.models import PortfolioSnapshot
-from app.services.errors import NotConnectedError, ProviderNotFoundError, ProviderUnavailableError
+from app.services.errors import ProviderNotFoundError, ProviderUnavailableError
 from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
 from app.services.snaptrade_service import SnapTradeService
@@ -51,20 +52,22 @@ async def _current_holdings(app_state: Any) -> list[Any] | None:  # noqa: ANN401
     """Return the user's current `PositionView`s, or `None` if a run should be skipped.
 
     Shared by all three jobs: each needs the same "what do we currently
-    hold" starting point, and each has the same two skip conditions (no
-    connection yet; SnapTrade itself unavailable) rather than partially
-    running against stale/empty data.
+    hold" starting point.  Personal-key credentials come from settings
+    (pre-provisioned at SnapTrade signup); no DB row is consulted.
+    Returns `None` only when SnapTrade itself is unavailable -- an empty
+    list (no brokerage linked yet) propagates through so the job loops
+    over nothing rather than crashing.
     """
+    settings = get_settings()
     async with app_state.session_factory() as session:
         snaptrade = SnapTradeService(
             client=app_state.snaptrade_client,
             cache=CacheRepository(session),
-            session=session,
+            user_id=settings.snaptrade_user_id.get_secret_value(),
+            user_secret=settings.snaptrade_user_secret.get_secret_value(),
         )
         try:
             positions = await snaptrade.list_positions()
-        except NotConnectedError:
-            return None
         except ProviderUnavailableError as exc:
             logger.warning("Skipping scheduled run: SnapTrade unavailable: %s", exc)
             return None

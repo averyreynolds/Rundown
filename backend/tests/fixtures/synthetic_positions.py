@@ -5,18 +5,15 @@ installed `snaptrade-python-sdk` package (see
 `app/services/snaptrade_service.py`'s module docstring) -- not real
 account, credential, or holdings data (CLAUDE.md forbids committing any
 of that, even in test fixtures).
+
+The personal-key flow does not call `registerUser`, so there is no
+`synthetic_register_response` here and `build_fake_snaptrade_client` does
+not include an `aregister_snap_trade_user` mock.
 """
 
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
-
-
-def synthetic_register_response(
-    user_id: str = "rundown-local-user",
-    user_secret: str = "synthetic-secret",  # noqa: S107
-) -> dict[str, str]:
-    return {"userId": user_id, "userSecret": user_secret}
 
 
 def synthetic_login_response(
@@ -63,7 +60,7 @@ def build_fake_snaptrade_client(
     accounts: list[dict[str, Any]] | None = None,
     balance: dict[str, Any] | None = None,
     positions: list[dict[str, Any]] | None = None,
-    register_error: Exception | None = None,
+    login_error: Exception | None = None,
     positions_error: Exception | None = None,
 ) -> SimpleNamespace:
     """A `SimpleNamespace` shaped like the real `SnapTrade` SDK client.
@@ -71,17 +68,17 @@ def build_fake_snaptrade_client(
     Matches the real client's `.authentication.a*` /
     `.account_information.a*` async-method shape closely enough for
     `SnapTradeService` to use it unmodified, without needing the real
-    SDK's `aiohttp`-based transport or a live SnapTrade account. Shared by
-    both the service-level and route-level test suites so this shape is
+    SDK's `aiohttp`-based transport or a live SnapTrade account.  Shared
+    by both the service-level and route-level test suites so this shape is
     defined once.
+
+    The personal-key flow calls only `alogin_snap_trade_user` (not
+    `aregister_snap_trade_user`), so only that method is mocked here.
     """
-    register_mock = AsyncMock(
-        side_effect=register_error,
-        return_value=None
-        if register_error
-        else SimpleNamespace(body=synthetic_register_response()),
+    login_mock = AsyncMock(
+        side_effect=login_error,
+        return_value=None if login_error else SimpleNamespace(body=synthetic_login_response()),
     )
-    login_mock = AsyncMock(return_value=SimpleNamespace(body=synthetic_login_response()))
     accounts_mock = AsyncMock(
         return_value=SimpleNamespace(body=accounts if accounts is not None else [])
     )
@@ -94,7 +91,6 @@ def build_fake_snaptrade_client(
     )
     return SimpleNamespace(
         authentication=SimpleNamespace(
-            aregister_snap_trade_user=register_mock,
             alogin_snap_trade_user=login_mock,
         ),
         account_information=SimpleNamespace(

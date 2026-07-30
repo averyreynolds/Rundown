@@ -57,23 +57,29 @@ async def _build_claude_service(
     *,
     anthropic_client: SimpleNamespace,
     positions: list[dict[str, Any]] | None = None,
-    connected: bool = True,
 ) -> ClaudeService:
     """Wire a `ClaudeService` to real sub-services sharing one DB session.
 
     Safe because `ClaudeService.chat()` awaits its sub-service calls
     sequentially, never concurrently, so one shared session/cache is fine
     for the lifetime of a single `chat()` call in these tests.
+
+    Personal-key flow: credentials are passed directly; no `connect()` call
+    needed before `list_positions()` is usable.  Pass `positions=[]` to
+    simulate no brokerage data being available.
     """
     cache = CacheRepository(session)
     snaptrade_client = build_fake_snaptrade_client(
-        accounts=[synthetic_account()],
+        accounts=[synthetic_account()] if positions != [] else [],
         balance=synthetic_balance(),
         positions=positions if positions is not None else [synthetic_stock_position()],
     )
-    snaptrade_service = SnapTradeService(client=snaptrade_client, cache=cache, session=session)
-    if connected:
-        await snaptrade_service.connect()
+    snaptrade_service = SnapTradeService(
+        client=snaptrade_client,
+        cache=cache,
+        user_id="test-user-id",
+        user_secret="test-user-secret",  # noqa: S106
+    )
 
     return ClaudeService(
         client=anthropic_client,  # type: ignore[arg-type]
@@ -136,8 +142,10 @@ async def test_chat_with_no_context_available_raises_insufficient_context(
 ) -> None:
     anthropic_client = _fake_anthropic_client()
     async with db_session_factory() as session:
+        # positions=[] → empty accounts → list_positions() returns [] → no portfolio context.
+        # No symbols and no filing ref → InsufficientContextError.
         service = await _build_claude_service(
-            session, anthropic_client=anthropic_client, connected=False
+            session, anthropic_client=anthropic_client, positions=[]
         )
         with pytest.raises(InsufficientContextError):
             await service.chat("What's a P/E ratio?", ContextRefs())
@@ -160,7 +168,7 @@ async def test_filing_summarization_returns_citations_from_the_source_filing(
 
     async with db_session_factory() as session:
         service = await _build_claude_service(
-            session, anthropic_client=anthropic_client, connected=False
+            session, anthropic_client=anthropic_client, positions=[]
         )
         response = await service.chat(
             "Summarize this filing.",
@@ -189,7 +197,7 @@ async def test_filing_summarization_for_unknown_symbol_raises_insufficient_conte
 
     async with db_session_factory() as session:
         service = await _build_claude_service(
-            session, anthropic_client=anthropic_client, connected=False
+            session, anthropic_client=anthropic_client, positions=[]
         )
         with pytest.raises(InsufficientContextError):
             await service.chat(
