@@ -32,7 +32,7 @@ Fill in `.env` with real values:
 | `SNAPTRADE_CLIENT_ID`, `SNAPTRADE_CONSUMER_KEY` | [SnapTrade dashboard](https://dashboard.snaptrade.com/) — free personal tier |
 | `FMP_API_KEY` | [Financial Modeling Prep](https://site.financialmodelingprep.com/) — free tier, ~250 requests/day |
 | `FINNHUB_API_KEY` | [Finnhub](https://finnhub.io/) — free tier, 60 calls/min |
-| `ANTHROPIC_API_KEY` | [Anthropic Console](https://console.anthropic.com/) — not yet used by any route, but `Settings()` requires it to be present |
+| `ANTHROPIC_API_KEY` | [Anthropic Console](https://console.anthropic.com/) — keys look like `sk-ant-...`. Used by `/advisor/chat`. |
 | `SEC_EDGAR_USER_AGENT` | Your own value: `"AppName/Version (you@example.com)"`. SEC requires a descriptive, real contact email or `data.sec.gov` returns 403. |
 | `API_BEARER_TOKEN` | Generate one: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 
@@ -64,6 +64,8 @@ curl -H "Authorization: Bearer <your API_BEARER_TOKEN>" http://127.0.0.1:8000/po
 
 First-time flow: `POST /portfolio/connect` registers (once) and returns a SnapTrade connection portal URL; open it, connect a brokerage account, then `/portfolio/accounts` and `/portfolio/positions` return real data. Before connecting, those two routes return `409` (not a crash) so the frontend can distinguish "nothing to show yet" from a provider outage.
 
+`POST /advisor/chat` answers a question grounded only in the data you name in `context_refs` (`symbols`, and/or a `filing_ref` for citation-grounded filing summarization) — it never answers from the model's general knowledge, and it never tells you what to do with a position. Returns `422` if none of the referenced context is actually available (no symbols, no connected portfolio, no matching filing).
+
 ## Running the test suite
 
 ```bash
@@ -90,3 +92,5 @@ All four should pass clean before opening a PR. The test suite never hits a live
 - **SnapTrade's `connection_type="read"` enforcement is not independently verified.** Whether the brokerage enforces read-only access at the OAuth-consent level (a hard boundary) or only treats it as a request-shape hint to the connection portal couldn't be confirmed without a live SnapTrade account. The code-level guarantee — `app/services/snaptrade_service.py` never imports SnapTrade's trading/orders SDK namespace (enforced by a static AST test) — is the guarantee that's actually verified. Confirm the platform-level behavior against SnapTrade's docs/support before treating this as airtight.
 - **No trade execution anywhere.** This is a hard product/legal boundary (see the root `CLAUDE.md`), not an oversight — do not add order/trade/transfer endpoints without explicitly revisiting that boundary first.
 - **FMP/SnapTrade response field names were verified by introspecting the installed SDK/API docs, not against a live response** (no real API keys are available in this environment). Re-verify against real data once you have credentials — see the module docstrings in `app/services/fmp_service.py` and `app/services/snaptrade_service.py` for exactly what's unverified.
+- **The advisor's no-directive-advice filter is lexical, not semantic.** `contains_directive_language()` in `app/services/claude_service.py` catches known phrases ("you should sell," "I recommend") but not semantically prescriptive, lexically-clean phrasing ("this looks like an attractive entry point"). This is an accepted MVP limitation, defended in depth by the system prompt; escalate to a second-pass semantic check (e.g. an extra classifier call) if real model outputs exhibit this pattern.
+- **Anthropic Citations API response shape was verified by introspecting the installed SDK's type definitions, not a live response** (no real API key is available in this environment). Re-verify filing-summarization citation quality once real credentials exist.
