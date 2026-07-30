@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from snaptrade_client.client import SnapTrade
@@ -18,6 +19,7 @@ from app.api.routers import filings, fundamentals, health, news, portfolio
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import create_engine, create_session_factory, init_models
+from app.scheduler.jobs import register_jobs
 
 _FMP_BASE_URL = "https://financialmodelingprep.com"
 _FINNHUB_BASE_URL = "https://finnhub.io"
@@ -29,18 +31,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     U1 wired up settings + logging; U3 added the DB engine; U5 added the
     shared FMP `httpx.AsyncClient`; U6 added the shared EDGAR client; U7
-    added the shared Finnhub client; U4 adds the shared SnapTrade SDK
-    client below. Later units extend this same function to construct
-    further shared resources on startup and tear them down (in reverse
-    order) on shutdown:
+    added the shared Finnhub client; U4 added the shared SnapTrade SDK
+    client; U9 starts the scheduler below. Later units extend this same
+    function further:
 
       - U8: construct the shared Anthropic client and store it on
         `app.state`.
-      - U9: start APScheduler's `AsyncIOScheduler` *after* the resources
-        above are ready; on shutdown, stop the scheduler *first* (waiting
-        for any in-flight job) *before* disposing the DB engine or closing
-        the HTTP clients, so a mid-flight job never touches an
-        already-closed resource during a dev-server restart.
+
+    Teardown is the reverse of startup: the scheduler is stopped *first*
+    (waiting for any in-flight job to finish) *before* the HTTP clients
+    are closed and the DB engine is disposed, so a mid-flight job never
+    touches an already-closed resource during a dev-server restart.
     """
     settings = get_settings()
     configure_logging(settings.secret_values(), log_level=settings.log_level)
@@ -78,11 +79,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         consumer_key=settings.snaptrade_consumer_key.get_secret_value(),
     )
 
+    # Started only after every resource the jobs depend on is ready.
+    # Single-process/single-worker only (`uvicorn --workers 1`): APScheduler
+    # assumes one process, and a multi-worker deployment would create N
+    # independent schedulers each refreshing the cache redundantly.
+    scheduler = AsyncIOScheduler()
+    register_jobs(scheduler, app.state)
+    scheduler.start()
+    app.state.scheduler = scheduler
+
     yield
 
-    # Teardown is the reverse of startup. Once U9's scheduler exists, its
-    # shutdown must be awaited *before* the clients/engine below are torn
-    # down, so an in-flight job never touches an already-closed resource.
+    # Stop the scheduler first and wait for any in-flight job to finish,
+    # before the HTTP clients/DB engine it depends on are torn down below.
+    # `AsyncIOScheduler.shutdown()` is a plain sync method, not a
+    # coroutine, despite the "asyncio" in its name.
+    scheduler.shutdown(wait=True)
     await app.state.finnhub_client.aclose()
     await app.state.edgar_client.aclose()
     await app.state.fmp_client.aclose()
