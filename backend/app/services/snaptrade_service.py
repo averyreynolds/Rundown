@@ -256,7 +256,22 @@ class SnapTradeService:
             raise ProviderFetchError(
                 f"SnapTrade get_user_account_balance failed for {account_id}"
             ) from exc
-        return dict(response.body)
+        # The balance endpoint returns a list of per-currency balances
+        # (e.g. [{currency: {id, code, name}, cash: float, buying_power: float}]).
+        # Prefer the USD entry; fall back to the first.
+        balances: list[dict[str, Any]] = response.body
+        if not balances:
+            return {}
+        balance = next(
+            (b for b in balances if isinstance(b.get("currency"), dict) and b["currency"].get("code") == "USD"),
+            balances[0],
+        )
+        currency_raw = balance.get("currency")
+        return {
+            "cash": balance.get("cash"),
+            "buying_power": balance.get("buying_power"),
+            "currency": currency_raw.get("code") if isinstance(currency_raw, dict) else currency_raw,
+        }
 
     async def _fetch_positions(self, account_id: str) -> CachedResult:
         return await fetch_with_cache(
@@ -277,7 +292,10 @@ class SnapTradeService:
             raise ProviderFetchError(
                 f"SnapTrade get_all_account_positions failed for {account_id}"
             ) from exc
-        return [dict(position) for position in response.body]
+        # The positions endpoint wraps results: {results: [...], data_freshness: {...}}.
+        raw: Any = response.body
+        positions: list[dict[str, Any]] = raw.get("results", []) if isinstance(raw, dict) else raw
+        return [dict(position) for position in positions]
 
 
 def _optional_decimal(value: Any) -> Decimal | None:  # noqa: ANN401
