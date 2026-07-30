@@ -10,10 +10,11 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from snaptrade_client.client import SnapTrade
 
 from app.api.dependencies import require_api_token
 from app.api.error_handlers import register_error_handlers
-from app.api.routers import filings, fundamentals, health, news
+from app.api.routers import filings, fundamentals, health, news, portfolio
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import create_engine, create_session_factory, init_models
@@ -28,13 +29,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     U1 wired up settings + logging; U3 added the DB engine; U5 added the
     shared FMP `httpx.AsyncClient`; U6 added the shared EDGAR client; U7
-    adds the shared Finnhub client below. Later units extend this same
-    function to construct further shared resources on startup and tear
-    them down (in reverse order) on shutdown:
+    added the shared Finnhub client; U4 adds the shared SnapTrade SDK
+    client below. Later units extend this same function to construct
+    further shared resources on startup and tear them down (in reverse
+    order) on shutdown:
 
-      - U4/U8: construct one long-lived shared `httpx.AsyncClient` (or SDK
-        client) per remaining provider -- SnapTrade, Anthropic -- and
-        store each on `app.state`.
+      - U8: construct the shared Anthropic client and store it on
+        `app.state`.
       - U9: start APScheduler's `AsyncIOScheduler` *after* the resources
         above are ready; on shutdown, stop the scheduler *first* (waiting
         for any in-flight job) *before* disposing the DB engine or closing
@@ -67,6 +68,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.finnhub_client = httpx.AsyncClient(
         base_url=_FINNHUB_BASE_URL,
         params={"token": settings.finnhub_api_key.get_secret_value()},
+    )
+
+    # No `.aclose()` needed at teardown, unlike the httpx clients above:
+    # the SDK's async methods open a fresh aiohttp session per call rather
+    # than holding one open (see snaptrade_service.py's docstring).
+    app.state.snaptrade_client = SnapTrade(
+        client_id=settings.snaptrade_client_id.get_secret_value(),
+        consumer_key=settings.snaptrade_consumer_key.get_secret_value(),
     )
 
     yield
@@ -116,10 +125,9 @@ def create_app() -> FastAPI:
     # Every other router belongs on `protected_router`, not directly on
     # `app`, so it automatically inherits the shared-secret bearer-token
     # gate -- the backend's real access-control layer (CORS above is
-    # defense-in-depth, not a substitute for it). Later units add their
-    # router here, e.g.:
-    #   protected_router.include_router(portfolio.router)
+    # defense-in-depth, not a substitute for it).
     protected_router = APIRouter(dependencies=[Depends(require_api_token)])
+    protected_router.include_router(portfolio.router)
     protected_router.include_router(fundamentals.router)
     protected_router.include_router(filings.router)
     protected_router.include_router(news.router)

@@ -10,7 +10,7 @@ constructors, not the only way to build them.
 """
 
 import hmac
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -22,6 +22,7 @@ from app.db.session import get_session
 from app.services.edgar_service import EdgarService
 from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
+from app.services.snaptrade_service import SnapTradeService
 
 _BEARER_PREFIX = "Bearer "
 
@@ -111,3 +112,27 @@ def get_finnhub_service(
 ) -> FinnhubService:
     """Build a `FinnhubService` from the shared client and a request-scoped cache."""
     return FinnhubService(client=client, cache=cache)
+
+
+def get_snaptrade_client(request: Request) -> Any:  # noqa: ANN401
+    """Return the shared SnapTrade SDK client the lifespan constructed at startup.
+
+    Typed as `Any` -- see `SnapTradeService`'s docstring for why the SDK's
+    own generic type doesn't resolve cleanly under mypy strict mode.
+    """
+    return request.app.state.snaptrade_client
+
+
+def get_snaptrade_service(
+    client: Annotated[Any, Depends(get_snaptrade_client)],  # noqa: ANN401
+    cache: Annotated[CacheRepository, Depends(get_cache_repository)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> SnapTradeService:
+    """Build a `SnapTradeService` from the shared client, cache, and DB session.
+
+    Takes `session` directly (unlike the other `get_*_service` factories)
+    because `snaptrade_connection` is a durable credential row, not a
+    cache entry -- `SnapTradeService` reads/writes it itself rather than
+    routing it through `CacheRepository`, which owns `cache_entries` only.
+    """
+    return SnapTradeService(client=client, cache=cache, session=session)

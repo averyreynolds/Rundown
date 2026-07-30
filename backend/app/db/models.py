@@ -56,3 +56,21 @@ class PortfolioSnapshot(Base):
     symbol: Mapped[str] = mapped_column(String(20), index=True)
     market_value: Mapped[Decimal] = mapped_column(Numeric)
     allocation_pct: Mapped[Decimal] = mapped_column(Numeric)
+
+
+class SnaptradeConnection(Base):
+    """This app's single local user's persisted SnapTrade connection.
+
+    A true singleton table (Key Technical Decisions): `unique=True` on
+    `user_id` means a second concurrent `connect()` call that races the
+    first's check-then-register sees a uniqueness conflict on insert,
+    which `SnapTradeService` catches and treats as "already connected"
+    rather than double-registering with SnapTrade or crashing.
+    """
+
+    __tablename__ = "snaptrade_connection"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(255), unique=True)
+    user_secret: Mapped[str] = mapped_column(String(255))
+    connected_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
