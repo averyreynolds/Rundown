@@ -3,7 +3,25 @@
 import { useState } from "react";
 
 export function EmptyState() {
-  const [notice, setNotice] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "connecting" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleConnect() {
+    setStatus("connecting");
+    setError(null);
+    try {
+      const res = await fetch("/api/portfolio/connect", { method: "POST" });
+      const body = (await res.json()) as { portalUrl?: string; error?: string };
+      if (!res.ok || !body.portalUrl) {
+        throw new Error(body.error ?? "Could not start the SnapTrade connection.");
+      }
+      window.open(body.portalUrl, "_blank", "noopener,noreferrer");
+      setStatus("idle");
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? err.message : "Could not start the SnapTrade connection.");
+    }
+  }
 
   return (
     <section className="rounded-2xl border border-border bg-surface p-8 text-center sm:p-12">
@@ -18,14 +36,13 @@ export function EmptyState() {
         Connect a brokerage account through SnapTrade to see your positions, fundamentals, and news here.
       </p>
       <button
-        onClick={() =>
-          setNotice("This opens SnapTrade's connection portal once the backend is wired up in this build.")
-        }
-        className="mt-5 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-ink/85"
+        onClick={handleConnect}
+        disabled={status === "connecting"}
+        className="mt-5 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-ink/85 disabled:opacity-60"
       >
-        Connect your brokerage
+        {status === "connecting" ? "Opening SnapTrade…" : "Connect your brokerage"}
       </button>
-      {notice && <p className="mx-auto mt-3 max-w-sm text-xs text-ink-faint">{notice}</p>}
+      {error && <p className="mx-auto mt-3 max-w-sm text-xs text-status-error">{error}</p>}
     </section>
   );
 }

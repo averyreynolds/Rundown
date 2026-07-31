@@ -69,6 +69,32 @@ Rundown exists to cater towards investors who are engaged but time-constrained. 
 ```
 
 ---
+
+## Status
+
+MVP, single-user, greenfield. Both services run and are wired end-to-end: the dashboard fetches real positions, fundamentals, news, and filings from the backend, and the AI advisor answers questions grounded in that same data. What's not yet built: a company-name source for holdings (displayed by ticker for now) and a concentration/"worth a look" signal. See `frontend/README.md` and `backend/README.md` for exact gaps.
+
+## Getting started
+
+Two services, run separately. Full detail lives in each service's own README ([`backend/README.md`](backend/README.md), [`frontend/README.md`](frontend/README.md)) -- this is the short version.
+
+```bash
+# 1. Backend
+cd backend
+uv sync
+cp .env.example .env   # fill in real API keys -- see backend/README.md
+uv run uvicorn app.main:app --reload
+
+# 2. Frontend (separate terminal)
+cd frontend
+npm install
+cp .env.local.example .env.local   # RUNDOWN_API_BEARER_TOKEN must match backend/.env
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). With no brokerage connected yet you'll land on an empty state with a "Connect your brokerage" button (SnapTrade, read-only); once connected, the dashboard and AI advisor both run on your real data.
+
+---
  
 ## License
  

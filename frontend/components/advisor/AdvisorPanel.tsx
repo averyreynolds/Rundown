@@ -1,54 +1,36 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAdvisor } from "./AdvisorProvider";
-import { getHoldings, getPositionsFreshness } from "@/lib/fixtures";
-import { formatAsOf, formatSignedPercent } from "@/lib/format";
-import type { ChatMessage, Citation } from "@/lib/types";
+import { formatAsOf } from "@/lib/format";
+import type { ChatMessage } from "@/lib/types";
 
-const SUGGESTED_PROMPT = "Should I sell NVDA?";
+const GENERAL_SUGGESTED_PROMPT = "What's changed in my portfolio recently?";
 
-function buildScopedExchange(symbol: string): ChatMessage[] {
-  const holding = getHoldings().find((h) => h.position.symbol === symbol);
-  if (!holding) return [];
-
-  const { position, fundamentals, flagReason } = holding;
-  const freshness = getPositionsFreshness();
-  const direction = position.unrealizedPnlDollars >= 0 ? "up" : "down";
-
-  const lines = [
-    `I can't tell you whether to buy or sell — that's not something I do. Here's what's relevant to your ${symbol} position instead:`,
-    `${symbol} is ${direction} ${formatSignedPercent(Math.abs(position.unrealizedPnlPercent ?? 0))} since cost basis and makes up ${position.allocationPct.toFixed(1)}% of your portfolio.`,
-  ];
-  if (fundamentals) {
-    lines.push(
-      `Its P/E is ${fundamentals.value.priceToEarningsRatio?.toFixed(1)} and trailing ROE is ${((fundamentals.value.returnOnEquityTtm ?? 0) * 100).toFixed(0)}%, per its latest fundamentals.`
-    );
-  }
-  if (flagReason) lines.push(flagReason);
-
-  const citations: Citation[] = [
-    { source: "SnapTrade — /portfolio/positions", quote: `${symbol}: allocation_pct=${position.allocationPct}, unrealized_pnl_percent=${position.unrealizedPnlPercent}`, asOf: freshness.asOf },
-  ];
-  if (fundamentals) {
-    citations.push({
-      source: "Financial Modeling Prep — /fundamentals/" + symbol,
-      quote: `priceToEarningsRatio: ${fundamentals.value.priceToEarningsRatio}, returnOnEquityTTM: ${fundamentals.value.returnOnEquityTtm}`,
-      asOf: fundamentals.asOf,
+/** Calls the same-origin proxy (`app/api/advisor/chat/route.ts`), never the backend directly. */
+async function askAdvisor(question: string, symbols: string[]): Promise<ChatMessage> {
+  try {
+    const res = await fetch("/api/advisor/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, symbols }),
     });
+    const body = (await res.json()) as { answer?: string; citations?: ChatMessage["citations"]; error?: string };
+    if (!res.ok || typeof body.answer !== "string") {
+      return { role: "advisor", text: body.error ?? "The advisor is temporarily unavailable." };
+    }
+    return { role: "advisor", text: body.answer, citations: body.citations };
+  } catch {
+    return { role: "advisor", text: "Couldn't reach the advisor — check that the backend is running." };
   }
-
-  return [
-    { role: "user", text: `Should I sell ${symbol}?` },
-    { role: "advisor", text: lines.join(" "), citations },
-  ];
 }
 
 export function AdvisorPanel() {
-  const { isOpen, scopeSymbol, close, open } = useAdvisor();
+  const { isOpen, scopeSymbol, close } = useAdvisor();
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [transientNotice, setTransientNotice] = useState<string | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const [isSending, setIsSending] = useState(false);
+  const lastAutoAskedScope = useRef<string | null>(null);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -58,17 +40,37 @@ export function AdvisorPanel() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [isOpen, close]);
 
-  const messages = useMemo(() => (scopeSymbol ? buildScopedExchange(scopeSymbol) : []), [scopeSymbol]);
+  // Opening the panel scoped to a new symbol (e.g. "Ask about this
+  // position") starts a fresh, grounded exchange about just that holding.
+  useEffect(() => {
+    if (!isOpen || !scopeSymbol || lastAutoAskedScope.current === scopeSymbol) return;
+    lastAutoAskedScope.current = scopeSymbol;
+
+    const question = `What's relevant to my ${scopeSymbol} position right now?`;
+    setMessages([{ role: "user", text: question }]);
+    setIsSending(true);
+    askAdvisor(question, [scopeSymbol]).then((reply) => {
+      setMessages((prev) => [...prev, reply]);
+      setIsSending(false);
+    });
+  }, [isOpen, scopeSymbol]);
 
   if (!isOpen) return null;
 
+  async function submitQuestion(question: string) {
+    if (!question || isSending) return;
+    setMessages((prev) => [...prev, { role: "user", text: question }]);
+    setIsSending(true);
+    const reply = await askAdvisor(question, scopeSymbol ? [scopeSymbol] : []);
+    setMessages((prev) => [...prev, reply]);
+    setIsSending(false);
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!draft.trim()) return;
-    setTransientNotice(
-      "This build runs on synthetic fixture data — live chat connects once /advisor/chat is wired to the backend."
-    );
+    const question = draft.trim();
     setDraft("");
+    void submitQuestion(question);
   }
 
   return (
@@ -79,7 +81,6 @@ export function AdvisorPanel() {
         className="absolute inset-0 bg-ink/20 backdrop-blur-[1px]"
       />
       <div
-        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Portfolio advisor"
@@ -110,10 +111,10 @@ export function AdvisorPanel() {
                 <p>Ask about a position, a filing, or a recent headline. Answers cite the exact data behind them.</p>
                 <button
                   type="button"
-                  onClick={() => open("NVDA")}
+                  onClick={() => void submitQuestion(GENERAL_SUGGESTED_PROMPT)}
                   className="rounded-lg border border-border bg-paper px-3 py-2 text-left text-sm text-ink transition-colors hover:border-border-strong"
                 >
-                  {SUGGESTED_PROMPT}
+                  {GENERAL_SUGGESTED_PROMPT}
                 </button>
               </div>
             </div>
@@ -145,24 +146,29 @@ export function AdvisorPanel() {
                   </div>
                 </li>
               ))}
+              {isSending && (
+                <li className="flex justify-start">
+                  <div className="max-w-[92%] rounded-2xl rounded-bl-sm border border-border bg-paper px-3.5 py-2.5 text-sm text-ink-faint">
+                    Thinking…
+                  </div>
+                </li>
+              )}
             </ol>
           )}
         </div>
-
-        {transientNotice && (
-          <p className="border-t border-border bg-paper px-5 py-2.5 text-xs text-ink-faint">{transientNotice}</p>
-        )}
 
         <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-border p-3.5">
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Ask a question about your holdings"
-            className="flex-1 rounded-full border border-border bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
+            placeholder={scopeSymbol ? `Ask about ${scopeSymbol}` : "Ask a question about your holdings"}
+            disabled={isSending}
+            className="flex-1 rounded-full border border-border bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none disabled:opacity-60"
           />
           <button
             type="submit"
-            className="rounded-full bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-ink"
+            disabled={isSending || draft.trim().length === 0}
+            className="rounded-full bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-ink disabled:opacity-60"
           >
             Ask
           </button>
