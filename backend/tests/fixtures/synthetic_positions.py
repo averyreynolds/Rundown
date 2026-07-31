@@ -32,12 +32,16 @@ def synthetic_balance() -> list[dict[str, Any]]:
 
 
 def synthetic_stock_position(
-    symbol: str = "AAPL", units: float = 10, price: float = 150.0, cost_basis: float = 1200.0
+    symbol: str = "AAPL",
+    units: float = 10,
+    price: float = 150.0,
+    cost_basis_per_share: float = 120.0,
 ) -> dict[str, Any]:
+    """A long equity position. SnapTrade's `cost_basis` is per share, not per position."""
     return {
         "units": units,
         "price": price,
-        "cost_basis": cost_basis,
+        "cost_basis": cost_basis_per_share,
         "instrument": {"kind": "stock", "symbol": symbol, "raw_symbol": symbol},
     }
 

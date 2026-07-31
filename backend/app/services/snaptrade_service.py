@@ -184,13 +184,9 @@ class SnapTradeService:
         """Return every equity-like holding across all accounts, with computed math.
 
         Kept account-scoped rather than merged across accounts by symbol:
-        merging would require weighted-averaging `cost_basis` across
-        accounts, and this plan has no live SnapTrade response to confirm
-        whether that field is a total or per-share figure. Getting that
-        wrong would silently produce an incorrect cost basis (CLAUDE.md
-        rule 6) -- for a single-brokerage-account MVP user this is
-        equivalent anyway, and it's a smaller, safer surface to extend
-        later once a live response confirms the field's units.
+        the same symbol held at two brokerages stays two rows. For a
+        single-brokerage-account MVP user that's equivalent, and it's the
+        smaller surface to extend later.
 
         An empty list is a valid, successful response (no brokerage
         linked yet) -- see `list_accounts`.
@@ -219,11 +215,14 @@ class SnapTradeService:
                 symbol = instrument.get("symbol") or instrument.get("raw_symbol")
                 units = Decimal(str(raw_position["units"]))
                 price = Decimal(str(raw_position["price"]))
+                # SnapTrade reports `cost_basis` per share; `Holding.cost_basis`
+                # is the position total.
+                cost_basis_per_share = Decimal(str(raw_position["cost_basis"]))
                 holdings.append(
                     Holding(
                         symbol=symbol,
                         quantity=units,
-                        cost_basis=Decimal(str(raw_position["cost_basis"])),
+                        cost_basis=cost_basis_per_share * units,
                         current_price=price,
                         market_value=units * price,
                     )

@@ -6,6 +6,8 @@ suite never touches the live network or the real SDK's `aiohttp`-based
 transport.
 """
 
+from decimal import Decimal
+
 import pytest
 from snaptrade_client.exceptions_base import OpenApiException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -88,6 +90,31 @@ async def test_list_positions_maps_holdings_and_filters_non_equity_kinds(
     assert view.market_value == view.quantity * view.current_price
     assert view.allocation_pct == 100
     assert view.unrealized_pnl_dollars == view.market_value - view.cost_basis
+
+
+async def test_list_positions_scales_per_share_cost_basis_by_units(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """SnapTrade's `cost_basis` is per share; `PositionView` must carry the position total.
+
+    Without the scaling, a 10-share position reports $120 of basis
+    instead of $1,200 and its unrealized P&L reads +$1,380 (+1150%)
+    instead of +$300 (+25%).
+    """
+    client = build_fake_snaptrade_client(
+        accounts=[synthetic_account()],
+        balance=synthetic_balance(),
+        positions=[synthetic_stock_position(units=10, price=150.0, cost_basis_per_share=120.0)],
+    )
+
+    async with db_session_factory() as session:
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
+        result = await service.list_positions()
+
+    view = result.value[0]
+    assert view.cost_basis == Decimal("1200")
+    assert view.unrealized_pnl_dollars == Decimal("300")
+    assert view.unrealized_pnl_percent == Decimal("25")
 
 
 async def test_list_accounts_includes_balance(
