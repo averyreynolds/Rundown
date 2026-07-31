@@ -33,6 +33,7 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal
+from html.parser import HTMLParser
 from typing import Any
 
 from anthropic import APIError, AsyncAnthropic
@@ -65,6 +66,15 @@ _CONCENTRATION_THRESHOLD_PCT = Decimal(20)
 _MAX_NEWS_ITEMS_PER_SYMBOL = 5
 
 _MAX_TOKENS = 1024
+
+# SEC's inline-XBRL filing HTML is mostly markup -- tags, inline styles,
+# table structure, XBRL contextRefs -- routinely 5-10x the size of the
+# actual filing text. Sending it to Claude raw, unstripped, is what
+# pushed a single large 10-K's document block past the model's 1M-token
+# prompt limit (the fetched EDGAR text itself is left untouched --
+# `/filings/{symbol}/{accession}` still returns the raw text/HTML it
+# always has -- this stripping is specific to what the advisor sends).
+_MAX_FILING_CHARS = 300_000
 
 # CLAUDE.md's four required elements, near-verbatim: (1) forbid directive
 # language, (2) context-only grounding -- say so when something isn't
@@ -149,6 +159,51 @@ class ContextItem:
 
 def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
+
+
+class _HtmlTextExtractor(HTMLParser):
+    """Pulls visible text out of filing HTML, dropping `<script>`/`<style>` bodies."""
+
+    _SKIPPED_TAGS = frozenset({"script", "style"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._SKIPPED_TAGS:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIPPED_TAGS and self._skip_depth > 0:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            self._parts.append(data)
+
+    def get_text(self) -> str:
+        return "".join(self._parts)
+
+
+def _prepare_filing_text(raw_text: str) -> tuple[str, bool]:
+    """Strip HTML markup and cap length so a filing document can't blow the prompt budget.
+
+    Returns `(text, was_truncated)`.
+    """
+    if "<" in raw_text and ">" in raw_text:
+        extractor = _HtmlTextExtractor()
+        extractor.feed(raw_text)
+        text = extractor.get_text()
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
+    else:
+        text = raw_text
+
+    if len(text) <= _MAX_FILING_CHARS:
+        return text, False
+    return text[:_MAX_FILING_CHARS], True
 
 
 class ClaudeService:
@@ -248,13 +303,15 @@ class ClaudeService:
 
         filing = result.value
         symbol = context_refs.filing_ref.symbol
+        text, was_truncated = _prepare_filing_text(filing.text)
+        truncated_suffix = " [truncated excerpt]" if was_truncated else ""
         document: DocumentBlockParam = {
             "type": "document",
-            "source": {"type": "text", "media_type": "text/plain", "data": filing.text},
-            "title": f"{symbol} {filing.form} filing ({filing.accession_number})",
+            "source": {"type": "text", "media_type": "text/plain", "data": text},
+            "title": f"{symbol} {filing.form} filing ({filing.accession_number}){truncated_suffix}",
             "citations": {"enabled": True},
         }
-        source_label = f"SEC EDGAR filing ({symbol} {filing.form})"
+        source_label = f"SEC EDGAR filing ({symbol} {filing.form}){truncated_suffix}"
         return document, source_label
 
     async def _build_portfolio_context(self, symbols: list[str] | None) -> ContextItem | None:

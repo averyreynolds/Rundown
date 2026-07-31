@@ -3,17 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useAdvisor } from "./AdvisorProvider";
 import { formatAsOf } from "@/lib/format";
+import type { AdvisorFilingRef } from "@/lib/rundown-api";
 import type { ChatMessage } from "@/lib/types";
 
 const GENERAL_SUGGESTED_PROMPT = "What's changed in my portfolio recently?";
 
 /** Calls the same-origin proxy (`app/api/advisor/chat/route.ts`), never the backend directly. */
-async function askAdvisor(question: string, symbols: string[]): Promise<ChatMessage> {
+async function askAdvisor(question: string, symbols: string[], filingRef: AdvisorFilingRef | null): Promise<ChatMessage> {
   try {
     const res = await fetch("/api/advisor/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, symbols }),
+      body: JSON.stringify({ question, symbols, filingRef: filingRef ?? undefined }),
     });
     const body = (await res.json()) as { answer?: string; citations?: ChatMessage["citations"]; error?: string };
     if (!res.ok || typeof body.answer !== "string") {
@@ -26,7 +27,7 @@ async function askAdvisor(question: string, symbols: string[]): Promise<ChatMess
 }
 
 export function AdvisorPanel() {
-  const { isOpen, scopeSymbol, close } = useAdvisor();
+  const { isOpen, scopeSymbol, scopeFilingRef, close } = useAdvisor();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -49,11 +50,11 @@ export function AdvisorPanel() {
     const question = `What's relevant to my ${scopeSymbol} position right now?`;
     setMessages([{ role: "user", text: question }]);
     setIsSending(true);
-    askAdvisor(question, [scopeSymbol]).then((reply) => {
+    askAdvisor(question, [scopeSymbol], scopeFilingRef).then((reply) => {
       setMessages((prev) => [...prev, reply]);
       setIsSending(false);
     });
-  }, [isOpen, scopeSymbol]);
+  }, [isOpen, scopeSymbol, scopeFilingRef]);
 
   if (!isOpen) return null;
 
@@ -61,7 +62,7 @@ export function AdvisorPanel() {
     if (!question || isSending) return;
     setMessages((prev) => [...prev, { role: "user", text: question }]);
     setIsSending(true);
-    const reply = await askAdvisor(question, scopeSymbol ? [scopeSymbol] : []);
+    const reply = await askAdvisor(question, scopeSymbol ? [scopeSymbol] : [], scopeFilingRef);
     setMessages((prev) => [...prev, reply]);
     setIsSending(false);
   }
@@ -91,7 +92,11 @@ export function AdvisorPanel() {
             <p className="text-sm font-medium text-ink">
               {scopeSymbol ? `About ${scopeSymbol}` : "Ask about your portfolio"}
             </p>
-            <p className="text-xs text-ink-faint">Explains what&apos;s relevant — never tells you what to do</p>
+            <p className="text-xs text-ink-faint">
+              {scopeFilingRef
+                ? `Grounded in filing ${scopeFilingRef.accessionNumber} — never tells you what to do`
+                : "Explains what's relevant — never tells you what to do"}
+            </p>
           </div>
           <button
             onClick={close}

@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.cache.cache_repository import CacheRepository
 from app.schemas.advisor import ContextRefs, FilingRef
 from app.services.claude_service import (
+    _MAX_FILING_CHARS,
     _SAFE_FALLBACK_MESSAGE,
     ClaudeService,
+    _prepare_filing_text,
     contains_directive_language,
 )
 from app.services.edgar_service import EdgarService
@@ -175,7 +177,10 @@ async def test_filing_summarization_returns_citations_from_the_source_filing(
     document_blocks = [block for block in sent_content if block.get("type") == "document"]
     assert len(document_blocks) == 1
     assert document_blocks[0]["citations"] == {"enabled": True}
-    assert document_blocks[0]["source"]["data"] == SYNTHETIC_FILING_TEXT
+    # The advisor strips filing HTML down to plain text before sending it
+    # to Claude (see `_prepare_filing_text`) -- the raw markup from
+    # `SYNTHETIC_FILING_TEXT` should not appear verbatim in the request.
+    assert document_blocks[0]["source"]["data"] == "Synthetic filing text for testing only."
 
 
 @respx.mock
@@ -194,6 +199,63 @@ async def test_filing_summarization_for_unknown_symbol_raises_insufficient_conte
                 "Summarize this filing.",
                 ContextRefs(filing_ref=FilingRef(symbol="NOTREAL", accession_number="000-00")),
             )
+
+
+# --- Filing text is stripped/capped before it reaches Claude ---------------
+# Regression coverage for a real bug: a large 10-K's raw, unstripped
+# inline-XBRL HTML pushed a single advisor request past the model's
+# 1M-token prompt limit (400 invalid_request_error). See
+# `_prepare_filing_text`'s docstring.
+
+
+def test_prepare_filing_text_strips_html_markup() -> None:
+    text, was_truncated = _prepare_filing_text(
+        "<html><body><p>Revenue grew 10%.</p><script>ignoreMe();</script></body></html>"
+    )
+    assert text == "Revenue grew 10%."
+    assert was_truncated is False
+
+
+def test_prepare_filing_text_passes_through_plain_text_unchanged() -> None:
+    text, was_truncated = _prepare_filing_text("Revenue grew 10% year over year.")
+    assert text == "Revenue grew 10% year over year."
+    assert was_truncated is False
+
+
+def test_prepare_filing_text_truncates_oversized_filings() -> None:
+    text, was_truncated = _prepare_filing_text("x" * (_MAX_FILING_CHARS + 1))
+    assert len(text) == _MAX_FILING_CHARS
+    assert was_truncated is True
+
+
+@respx.mock
+async def test_oversized_filing_document_is_truncated_and_labeled(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    respx.get(_SUBMISSIONS_URL).mock(return_value=httpx.Response(200, json=synthetic_submissions()))
+    oversized_filing = (
+        "<html><body>" + ("Revenue grew. " * (_MAX_FILING_CHARS // 10)) + "</body></html>"
+    )
+    respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=oversized_filing))
+    anthropic_client = _fake_anthropic_client("The filing shows revenue growth.")
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session, anthropic_client=anthropic_client, connected=False
+        )
+        response = await service.chat(
+            "Summarize this filing.",
+            ContextRefs(
+                filing_ref=FilingRef(symbol="SYNT", accession_number="0000320193-24-000123")
+            ),
+        )
+
+    sent_content = anthropic_client.messages.create.await_args.kwargs["messages"][0]["content"]
+    document_blocks = [block for block in sent_content if block.get("type") == "document"]
+    assert len(document_blocks[0]["source"]["data"]) == _MAX_FILING_CHARS
+    assert "[truncated excerpt]" in document_blocks[0]["title"]
+    assert response.answer == "The filing shows revenue growth."
 
 
 # --- The no-directive-advice boundary: the core legal requirement ----------
