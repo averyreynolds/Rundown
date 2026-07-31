@@ -83,7 +83,10 @@ async def test_get_filing_sections_extracts_relevant_items(
         ).get_filing_sections("SYNT", "0000320193-24-000123")
 
     assert result.value.form == "10-K"
-    assert [s.key for s in result.value.sections] == ["1A", "3", "5", "7", "7A"]
+    # Extraction takes more than the advisor sends by default: Risk Factors
+    # is available on request, and Item 8 is the notes source the pointer
+    # router mines. Scope is decided later, in `build_filing_document`.
+    assert [s.key for s in result.value.sections] == ["1A", "3", "5", "7", "7A", "8"]
     assert result.source == "SEC EDGAR"
 
 

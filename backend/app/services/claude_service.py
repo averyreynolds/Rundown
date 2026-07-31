@@ -42,6 +42,7 @@ from app.domain.allocation import Allocation
 from app.domain.concentration import flag_concentrated
 from app.domain.filing_sections import build_filing_document
 from app.schemas.advisor import ChatResponse, Citation, ContextRefs
+from app.schemas.xbrl import XbrlFact, XbrlFacts
 from app.services.edgar_service import EdgarService
 from app.services.errors import (
     AdvisorUnavailableError,
@@ -52,6 +53,7 @@ from app.services.errors import (
 from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
 from app.services.snaptrade_service import SnapTradeService
+from app.services.xbrl_service import XbrlService
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +77,20 @@ _MAX_TOKENS = 1024
 # `/filings/{symbol}/{accession}` still returns the raw text/HTML it
 # always has -- this budget applies only to what the advisor sends).
 #
-# `app.domain.filing_sections` now spends this budget on the sections
-# that bear on a position (MD&A, risk factors, market risk, legal,
-# dividends/buybacks) in priority order. The previous head-truncation
-# spent it on whatever came first in the document, which on a large 10-K
-# meant the cover page and table of contents, cutting off before MD&A.
-_MAX_FILING_CHARS = 300_000
+# `app.domain.filing_sections` spends this budget on the sections that
+# bear on a position (MD&A, market risk, legal, dividends/buybacks) in
+# priority order, plus any financial-statement note those sections defer
+# to. The previous head-truncation spent it on whatever came first in the
+# document, which on a large 10-K meant the cover page and table of
+# contents, cutting off before MD&A.
+#
+# Lowered from 300K now that Risk Factors is out of the default scope.
+# Across 14 real filings it was the largest Item in the old allowlist and
+# roughly 40% of the assembled excerpt, so the default payload is much
+# smaller than the old ceiling assumed. This leaves headroom for a large
+# MD&A plus resolved notes without leaving room for the excerpt to drift
+# back to a size nobody chose.
+_MAX_FILING_CHARS = 120_000
 
 # CLAUDE.md's four required elements, near-verbatim: (1) forbid directive
 # language, (2) context-only grounding -- say so when something isn't
@@ -107,8 +117,14 @@ provided context doesn't cover, say so explicitly instead of inferring \
 or guessing.
 
 3. For every factual claim, say which specific context item it comes \
-from (a holding, a fundamentals ratio, a filing passage, a news item). \
-For claims drawn from filing text, quote the specific line or sentence.
+from (a holding, a fundamentals ratio, a reported financial figure, a \
+filing passage, a news item). Filing-derived data comes to you in two \
+distinct forms and they are cited differently. For a claim drawn from \
+filing text, quote the specific line or sentence. For a claim drawn from \
+a reported financial figure, name the period it covers and the accession \
+number of the filing that reported it, and state the figure as given -- \
+do not round, rescale, or restate it, and never combine figures into a \
+derived number the filings do not themselves report.
 
 4. If the user asks "what should I do," "should I buy/sell," or \
 anything else asking you to recommend an action, do not refuse to \
@@ -195,6 +211,7 @@ class ClaudeService:
         fmp_service: FmpService,
         edgar_service: EdgarService,
         finnhub_service: FinnhubService,
+        xbrl_service: XbrlService,
     ) -> None:
         self._client = client
         self._model_id = model_id
@@ -202,6 +219,7 @@ class ClaudeService:
         self._fmp_service = fmp_service
         self._edgar_service = edgar_service
         self._finnhub_service = finnhub_service
+        self._xbrl_service = xbrl_service
 
     async def chat(self, question: str, context_refs: ContextRefs) -> ChatResponse:
         """Answer `question`, grounded only in the data `context_refs` names.
@@ -219,6 +237,11 @@ class ClaudeService:
         portfolio_item = await self._build_portfolio_context(context_refs.symbols or None)
         if portfolio_item is not None:
             context_items.append(portfolio_item)
+        # Ahead of fundamentals and news deliberately: these are figures
+        # the company itself reported, each traceable to the filing that
+        # reported it, so they are the most authoritative numbers in the
+        # context and should be what the model reaches for first.
+        context_items.extend(await self._build_facts_context(context_refs))
         if context_refs.symbols:
             context_items.extend(await self._build_fundamentals_context(context_refs.symbols))
             news_item = await self._build_news_context(context_refs.symbols)
@@ -298,6 +321,18 @@ class ClaudeService:
             },
             "title": f"{symbol} {segmented.form} filing ({accession_number}){excerpt_suffix}",
             "citations": {"enabled": True},
+            # A filing is immutable once published, so this block is
+            # byte-identical across every question about the same filing --
+            # and it's by far the largest thing in the request. Caching it
+            # makes a follow-up question cost a fraction of the first.
+            #
+            # Placement is already correct by construction: this document
+            # is the first content block, ahead of the provenance note,
+            # the assembled context, and the question, so the cached
+            # prefix is the system prompt plus this document and the
+            # volatile text sits after the breakpoint. Default 5-minute
+            # TTL, which breaks even at two questions about one filing.
+            "cache_control": {"type": "ephemeral"},
         }
         return _FilingAttachment(
             document=document,
@@ -351,6 +386,55 @@ class ClaudeService:
 
         return ContextItem(source="SnapTrade positions", as_of=result.as_of, text="\n".join(lines))
 
+    async def _build_facts_context(self, context_refs: ContextRefs) -> list[ContextItem]:
+        """SEC XBRL facts for every symbol in scope, newest period first.
+
+        Selection is symbol-wide rather than scoped to the referenced
+        filing, because a single filing's figures can't answer a question
+        about a trend -- but facts the referenced filing reported are
+        marked, so the model can still say "this filing reported" instead
+        of only "the company reported".
+
+        A filing reference implies its symbol even when the caller didn't
+        list it: asking about a 10-K is asking about that company.
+        """
+        filing_ref = context_refs.filing_ref
+        symbols = [symbol.upper() for symbol in context_refs.symbols]
+        if filing_ref is not None:
+            symbols.append(filing_ref.symbol.upper())
+
+        items: list[ContextItem] = []
+        # dict.fromkeys rather than a set: a caller listing the same symbol
+        # twice shouldn't reorder the context non-deterministically.
+        for symbol in dict.fromkeys(symbols):
+            referenced_accession = (
+                filing_ref.accession_number
+                if filing_ref is not None and filing_ref.symbol.upper() == symbol
+                else None
+            )
+            try:
+                result = await self._xbrl_service.get_facts(
+                    symbol, referenced_accession=referenced_accession
+                )
+            except (ProviderUnavailableError, ProviderNotFoundError):
+                continue
+
+            # An all-absent snapshot would be a block of context saying
+            # nothing was found. The model already handles "the context
+            # doesn't cover that" correctly; noise here would only crowd
+            # out the narrative excerpt.
+            if not result.value.facts:
+                continue
+
+            items.append(
+                ContextItem(
+                    source=f"SEC XBRL facts ({symbol})",
+                    as_of=result.as_of,
+                    text=_render_xbrl_facts(result.value, result.as_of),
+                )
+            )
+        return items
+
     async def _build_fundamentals_context(self, symbols: list[str]) -> list[ContextItem]:
         items: list[ContextItem] = []
         for symbol in symbols:
@@ -393,6 +477,52 @@ class ClaudeService:
             )
 
         return ContextItem(source="Finnhub news", as_of=result.as_of, text="\n".join(lines))
+
+
+def _render_xbrl_facts(snapshot: XbrlFacts, as_of: dt.datetime) -> str:
+    """Render one symbol's facts as context, grouped by line item.
+
+    Grouped by label rather than emitted as a flat list so a trend reads
+    as a trend: every period for one concept sits together, newest first,
+    each carrying the accession number of the filing that reported it.
+    """
+    lines = [
+        f"SEC XBRL structured facts for {snapshot.symbol} "
+        f"(retrieved {as_of.date().isoformat()}). Each figure below is a value the "
+        "company reported in the filing named beside it.",
+    ]
+
+    by_label: dict[str, list[XbrlFact]] = {}
+    for fact in snapshot.facts:
+        by_label.setdefault(fact.label, []).append(fact)
+
+    for label, facts in by_label.items():
+        lines.append(f"{label} ({facts[0].unit}):")
+        lines.extend(f"- {_render_fact(fact)}" for fact in facts)
+
+    if snapshot.missing_labels:
+        lines.append(
+            "No values were available in SEC's structured data for these line items: "
+            f"{'; '.join(snapshot.missing_labels)}. Treat them as outside this data -- "
+            "not as figures the company failed to report. Some are genuinely never "
+            "tagged by a given filer, and some measures (a REIT's FFO, for instance) "
+            "are non-GAAP and never appear in structured data at all."
+        )
+
+    return "\n".join(lines)
+
+
+def _render_fact(fact: XbrlFact) -> str:
+    period = (
+        f"{fact.period_start.isoformat()} to {fact.period_end.isoformat()}"
+        if fact.period_start is not None
+        else f"as of {fact.period_end.isoformat()}"
+    )
+    marker = " [reported by the filing in question]" if fact.from_referenced_filing else ""
+    return (
+        f"{period}: {fact.value} "
+        f"[{fact.form} accession {fact.accession_number}, filed {fact.filed.isoformat()}]{marker}"
+    )
 
 
 def _build_user_content(

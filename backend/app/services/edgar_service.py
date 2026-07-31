@@ -68,7 +68,7 @@ class EdgarService:
             ProviderNotFoundError: `symbol` isn't in SEC's ticker->CIK mapping.
             ProviderUnavailableError: EDGAR is failing and nothing is cached.
         """
-        cik = await self._resolve_cik(symbol)
+        cik = await self.resolve_cik(symbol)
         submissions = await self._fetch_submissions(cik)
         recent = submissions.payload["filings"]["recent"]
 
@@ -158,7 +158,7 @@ class EdgarService:
         )
 
     async def _locate_filing(self, symbol: str, accession_number: str) -> _LocatedFiling:
-        cik = await self._resolve_cik(symbol)
+        cik = await self.resolve_cik(symbol)
         submissions = await self._fetch_submissions(cik)
         recent = submissions.payload["filings"]["recent"]
 
@@ -182,7 +182,19 @@ class EdgarService:
         segmented = await anyio.to_thread.run_sync(segment_filing, raw, form)
         return segmented.to_cacheable()
 
-    async def _resolve_cik(self, symbol: str) -> str:
+    async def resolve_cik(self, symbol: str) -> str:
+        """Map a ticker to its SEC CIK, via the cached ticker->CIK mapping.
+
+        Public because `XbrlService` needs the same mapping: SEC's XBRL
+        endpoints are keyed by CIK, not ticker. Sharing this method rather
+        than duplicating the lookup means both services read one cache
+        entry under one key, so a symbol resolved for a filing costs
+        nothing to resolve again for its facts.
+
+        Raises:
+            ProviderNotFoundError: `symbol` isn't in SEC's ticker->CIK mapping.
+            ProviderUnavailableError: EDGAR is failing and nothing is cached.
+        """
         # Deliberately doesn't propagate this fetch's own `is_stale` into
         # the caller's overall result: a CIK, once assigned to a public
         # company, never changes, so a stale-fallback ticker map is

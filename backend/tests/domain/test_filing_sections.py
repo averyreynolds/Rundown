@@ -10,6 +10,7 @@ code. Every fixture is fabricated (CLAUDE.md hard rule 5).
 import pytest
 
 from app.domain.filing_sections import (
+    SegmentedFiling,
     build_filing_document,
     filing_html_to_text,
     looks_like_html,
@@ -87,7 +88,10 @@ def test_plain_text_filings_skip_the_html_parser() -> None:
 # --- Stage 2: Item segmentation --------------------------------------------
 
 
-def test_10k_extracts_exactly_the_portfolio_relevant_items() -> None:
+def test_10k_extracts_everything_that_might_be_wanted_not_just_the_default_scope() -> None:
+    """Extraction is the cached, expensive step, so it takes Risk Factors
+    (out of the default scope but available on request) and Item 8 (never
+    sent whole, but the target of every "refer to Note N" deferral)."""
     labels = _labels(synthetic_10k_html(), "10-K")
     assert labels == [
         "Item 1A. Risk Factors",
@@ -101,12 +105,13 @@ def test_10k_extracts_exactly_the_portfolio_relevant_items() -> None:
             "and Results of Operations"
         ),
         "Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        "Item 8. Financial Statements and Supplementary Data",
     ]
 
 
-def test_10k_excludes_business_and_financial_statements() -> None:
-    """Item 1 is long and static; Item 8 is enormous and FMP already
-    supplies the ratios it backs."""
+def test_10k_never_extracts_business() -> None:
+    """Item 1 is the one Item still not extracted at all: long, and largely
+    static year to year."""
     segmented = segment_filing(synthetic_10k_html(), "10-K")
     body = "\n".join(section.text for section in segmented.sections)
     assert "long and static" not in body
@@ -156,9 +161,12 @@ def test_item_number_boundaries_are_exact() -> None:
 
 def test_prose_cross_reference_does_not_split_a_section() -> None:
     """`Item 8 of this Annual Report contains ...` starts a line inside the
-    real Item 8 body; it must not be mistaken for a heading elsewhere."""
+    real Item 8 body. It repeats the Item number in prose, so it must not be
+    taken for a second heading that truncates the section it sits in."""
     segmented = segment_filing(synthetic_10k_html(), "10-K")
-    assert "8" not in {section.key for section in segmented.sections}
+    item_8 = [section for section in segmented.sections if section.key == "8"]
+    assert len(item_8) == 1
+    assert "Note 12" in item_8[0].text
 
 
 def test_section_text_is_verbatim() -> None:
@@ -169,19 +177,30 @@ def test_section_text_is_verbatim() -> None:
 
 
 def test_10q_item_1_resolves_by_part_not_by_number() -> None:
-    """Part I Item 1 is Financial Statements (excluded); Part II Item 1 is
-    Legal Proceedings (included). Number alone is ambiguous."""
+    """Part I Item 1 is Financial Statements; Part II Item 1 is Legal
+    Proceedings. Number alone is ambiguous, so both are keyed by Part."""
     segmented = segment_filing(synthetic_10q_html(), "10-Q")
-    assert [s.key for s in segmented.sections] == ["I:2", "I:3", "II:1", "II:1A"]
+    assert [s.key for s in segmented.sections] == ["I:1", "I:2", "I:3", "II:1", "II:1A"]
 
     legal = next(s for s in segmented.sections if s.key == "II:1")
     assert "No new fabricated proceedings" in legal.text
     assert "balance sheets" not in legal.text
 
 
-def test_10q_excludes_financial_statements_and_exhibits() -> None:
-    body = "\n".join(s.text for s in segment_filing(synthetic_10q_html(), "10-Q").sections)
-    assert "Excluded by policy" not in body
+def test_10q_financial_statements_are_extracted_but_not_sent_by_default() -> None:
+    """Extracted because Part I Item 1 is this form's notes source; out of
+    the default scope because it is far too large to send whole."""
+    segmented = segment_filing(synthetic_10q_html(), "10-Q")
+    assert "I:1" in {section.key for section in segmented.sections}
+
+    document = build_filing_document(segmented, _BUDGET)
+    assert "Excluded by policy" not in document.text
+    assert "Part I, Item 1. Financial Statements" in document.omitted_labels
+
+
+def test_10q_excludes_exhibits() -> None:
+    document = build_filing_document(segment_filing(synthetic_10q_html(), "10-Q"), _BUDGET)
+    assert "Part I, Item 4 and Part II, Items 2-6" in " ".join(document.omitted_labels)
 
 
 def test_8k_passes_through_whole() -> None:
@@ -230,16 +249,229 @@ def test_amended_filings_use_the_base_form_policy() -> None:
         "5",
         "7",
         "7A",
+        "8",
     ]
+
+
+# --- Pointer resolution: the router ----------------------------------------
+
+
+def _pointer_10k(deferral: str) -> str:
+    """A 10-K whose Item 3 defers to the notes instead of restating them.
+
+    The deferral is padded past `_MIN_SECTION_BODY_CHARS`: below 40
+    characters a section reads as a table-of-contents entry and isn't
+    extracted at all. That's correct, but it isn't what these tests are
+    about, and real deferrals are full sentences anyway.
+    """
+    return synthetic_10k_html(
+        legal_body=f"{deferral} No further disclosure is provided under this Item."
+    )
+
+
+def test_pointer_section_resolves_the_note_it_defers_to() -> None:
+    """The fix this exists for: filers satisfy Item 3 by deferring into the
+    notes, so flagging the gap is useless when the material is sitting in
+    the same document."""
+    segmented = segment_filing(
+        _pointer_10k("Refer to Note 12 of the financial statements."), "10-K"
+    )
+    legal = next(section for section in segmented.sections if section.key == "3")
+
+    assert legal.is_pointer is True
+    assert [note.label for note in legal.resolved_notes] == ["Note 12"]
+    assert "without merit" in legal.resolved_notes[0].text
+
+
+def test_resolved_note_carries_its_heading_and_only_its_own_body() -> None:
+    segmented = segment_filing(_pointer_10k("See Note 9 for details."), "10-K")
+    note = next(s for s in segmented.sections if s.key == "3").resolved_notes[0]
+
+    assert note.text.startswith("Note 9")
+    # Note 12's body must not bleed into Note 9's.
+    assert "without merit" not in note.text
+
+
+def test_note_index_entries_are_not_mistaken_for_the_note_body() -> None:
+    """Item 8 opens with its own index, where `Note 12` appears as a line
+    with a page number. Length is what separates it from the real note."""
+    segmented = segment_filing(_pointer_10k("Refer to Note 12."), "10-K")
+    note = next(s for s in segmented.sections if s.key == "3").resolved_notes[0]
+
+    assert "Commitments and Contingencies" in note.text
+    assert len(note.text) > 200
+
+
+def test_a_note_that_exists_only_as_an_index_line_resolves_nothing() -> None:
+    """A note number can appear in the notes index and nowhere else -- the
+    filer cross-referenced something they never actually wrote up. Handing
+    the model a dot-leadered page number as if it were the note is worse
+    than reporting the gap."""
+    html = synthetic_10k_html(
+        legal_body="Refer to Note 5 of the consolidated financial statements.",
+        notes_body=(
+            "<p><b>INDEX TO NOTES</b></p>"
+            "<table><tr><td>Note 5</td><td>Income Taxes</td><td>58</td></tr></table>"
+        ),
+    )
+    segmented = segment_filing(html, "10-K")
+    legal = next(section for section in segmented.sections if section.key == "3")
+
+    assert legal.resolved_notes == ()
+    assert legal.is_pointer is True
+
+
+def test_a_reference_to_a_note_that_does_not_exist_resolves_nothing() -> None:
+    segmented = segment_filing(_pointer_10k("Refer to Note 47 of the statements."), "10-K")
+    legal = next(section for section in segmented.sections if section.key == "3")
+
+    assert legal.resolved_notes == ()
+    assert legal.is_pointer is True
+
+
+def test_a_pointer_with_no_note_reference_resolves_nothing() -> None:
+    """ "Appears on pages 46-160" is a real deferral shape, and there is
+    nothing numbered for the router to fetch."""
+    segmented = segment_filing(_pointer_10k("This information appears on pages 46-160."), "10-K")
+
+    assert next(s for s in segmented.sections if s.key == "3").resolved_notes == ()
+
+
+def test_a_two_note_reference_resolves_both() -> None:
+    segmented = segment_filing(_pointer_10k("Refer to Notes 9 and 12."), "10-K")
+    labels = [n.label for n in next(s for s in segmented.sections if s.key == "3").resolved_notes]
+
+    assert labels == ["Note 9", "Note 12"]
+
+
+def test_resolved_note_is_emitted_under_its_own_heading_beneath_the_pointer() -> None:
+    document = build_filing_document(
+        segment_filing(_pointer_10k("Refer to Note 12."), "10-K"), _BUDGET
+    )
+
+    assert "Item 3. Legal Proceedings -- Note 12 (resolved)" in document.text
+    assert document.text.index("Item 3. Legal Proceedings =") < document.text.index("Note 12 (res")
+
+
+def test_a_resolved_pointer_is_not_reported_as_a_gap() -> None:
+    """Reporting it both ways would tell the model the material is missing
+    in the same breath as handing it over."""
+    document = build_filing_document(
+        segment_filing(_pointer_10k("Refer to Note 12."), "10-K"), _BUDGET
+    )
+
+    assert "Item 3. Legal Proceedings -> Note 12" in document.resolved_pointer_labels
+    assert "Item 3. Legal Proceedings" not in document.pointer_labels
+
+    note = document.provenance_note()
+    assert "has been located and included directly beneath it" in note
+    assert "Treat the note as that section's substance." in note
+
+
+def test_an_unresolved_pointer_is_still_reported_as_a_gap() -> None:
+    document = build_filing_document(
+        segment_filing(_pointer_10k("This information appears on pages 46-160."), "10-K"), _BUDGET
+    )
+
+    assert "Item 3. Legal Proceedings" in document.pointer_labels
+    assert "point to is NOT included here" in document.provenance_note()
+
+
+def test_resolved_notes_are_charged_to_the_budget() -> None:
+    """Item 3 is a few dozen characters alone and several thousand once its
+    note is attached. Billing it at the smaller figure would let it displace
+    a section ranked above it."""
+    segmented = segment_filing(_pointer_10k("Refer to Note 12."), "10-K")
+    document = build_filing_document(segmented, _BUDGET)
+
+    legal = next(section for section in segmented.sections if section.key == "3")
+    assert len(document.text) > len(legal.text) + len(legal.resolved_notes[0].text)
+
+
+def test_resolved_notes_survive_the_cache_round_trip() -> None:
+    segmented = segment_filing(_pointer_10k("Refer to Note 12."), "10-K")
+    restored = SegmentedFiling.from_cacheable(segmented.to_cacheable())
+
+    legal = next(section for section in restored.sections if section.key == "3")
+    assert [note.label for note in legal.resolved_notes] == ["Note 12"]
+    assert legal.resolved_notes[0].text == (
+        next(s for s in segmented.sections if s.key == "3").resolved_notes[0].text
+    )
+
+
+def test_sections_cached_before_pointer_resolution_existed_still_load() -> None:
+    """A 7-day filings TTL means pre-upgrade cache entries outlive the
+    deploy that added `resolved_notes`."""
+    legacy = {
+        "form": "10-K",
+        "sections": [{"key": "7", "label": "Item 7. MD&A", "text": "body", "is_pointer": False}],
+        "missing_labels": [],
+        "policy_excluded_labels": [],
+        "mode": "sections",
+    }
+
+    restored = SegmentedFiling.from_cacheable(legacy)
+    assert restored.sections[0].resolved_notes == ()
+
+
+# --- Scope: what gets sent, as distinct from what gets extracted ------------
+
+
+def test_risk_factors_is_extracted_but_out_of_the_default_scope() -> None:
+    """Largest Item in the old allowlist and the lowest-signal -- roughly
+    40% of the excerpt spent on boilerplate that barely changes yearly."""
+    segmented = segment_filing(synthetic_10k_html(), "10-K")
+    assert "1A" in {section.key for section in segmented.sections}
+
+    document = build_filing_document(segmented, _BUDGET)
+    assert "Item 1A. Risk Factors" not in document.included_labels
+    assert "Item 1A. Risk Factors" in document.omitted_labels
+
+
+def test_widening_the_scope_includes_risk_factors_without_reparsing() -> None:
+    segmented = segment_filing(synthetic_10k_html(), "10-K")
+    document = build_filing_document(segmented, _BUDGET, scope=("7", "1A"))
+
+    assert "Item 1A. Risk Factors" in document.included_labels
+    assert "single fabricated supplier" in document.text
+    # Narrowing is still reported, never silent.
+    assert "Item 3. Legal Proceedings" in document.omitted_labels
+
+
+def test_financial_statements_are_never_sent_whole_by_default() -> None:
+    document = build_filing_document(segment_filing(synthetic_10k_html(), "10-K"), _BUDGET)
+
+    assert "Item 8. Financial Statements and Supplementary Data" in document.omitted_labels
+    assert "Segment Information" not in document.text
+
+
+def test_whole_document_forms_ignore_scope_entirely() -> None:
+    """An 8-K has no Item policy to scope against; the single pseudo-section
+    is all there is to send."""
+    document = build_filing_document(segment_filing(SYNTHETIC_8K_HTML, "8-K"), _BUDGET)
+
+    assert "Item 2.02 Results of Operations" in document.text
+
+
+def test_unsegmented_filings_ignore_scope_entirely() -> None:
+    """An unsegmented 10-K *does* resolve a policy, but its pseudo-section
+    is keyed `full` and matches no Item. Scoping it would empty the excerpt
+    for precisely the filings this fallback exists to rescue."""
+    document = build_filing_document(
+        segment_filing("<html><body><p>No item headings here at all.</p></body></html>", "10-K"),
+        _BUDGET,
+    )
+
+    assert "No item headings here at all." in document.text
 
 
 # --- Budget fitting ---------------------------------------------------------
 
 
-def test_document_includes_every_section_when_it_fits() -> None:
+def test_document_includes_the_whole_default_scope_when_it_fits() -> None:
     document = build_filing_document(segment_filing(synthetic_10k_html(), "10-K"), _BUDGET)
     assert document.was_truncated is False
-    assert len(document.included_labels) == 5
+    assert len(document.included_labels) == 4
     assert "Revenue increased to $1,234 million" in document.text
 
 
@@ -252,8 +484,13 @@ def test_sections_are_emitted_in_document_order() -> None:
 def test_tight_budget_keeps_mdna_and_drops_legal_proceedings() -> None:
     """The regression this whole change exists for: a head-truncating
     `text[:max_chars]` on a large 10-K kept the cover page and table of
-    contents and cut off before MD&A. Priority fill inverts that."""
-    document = build_filing_document(segment_filing(synthetic_10k_html(), "10-K"), 400)
+    contents and cut off before MD&A. Priority fill inverts that.
+
+    Budgeted tight enough that only the first-priority section survives:
+    at looser budgets a short-labelled section like Item 3 can still fit
+    behind MD&A after larger ones were passed over, which is correct
+    greedy behaviour but obscures what this test is checking."""
+    document = build_filing_document(segment_filing(synthetic_10k_html(), "10-K"), 250)
     assert any("Management's Discussion" in label for label in document.included_labels)
     assert any("Legal Proceedings" in label for label in document.omitted_labels)
 

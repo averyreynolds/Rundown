@@ -25,6 +25,7 @@ from app.services.edgar_service import EdgarService
 from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
 from app.services.snaptrade_service import SnapTradeService
+from app.services.xbrl_service import XbrlService
 
 _BEARER_PREFIX = "Bearer "
 
@@ -103,6 +104,20 @@ def get_edgar_service(
     return EdgarService(client=client, cache=cache)
 
 
+def get_xbrl_service(
+    client: Annotated[httpx.AsyncClient, Depends(get_edgar_client)],
+    cache: Annotated[CacheRepository, Depends(get_cache_repository)],
+    edgar_service: Annotated[EdgarService, Depends(get_edgar_service)],
+) -> XbrlService:
+    """Build an `XbrlService` on the *EDGAR* client -- SEC's XBRL API is the same host.
+
+    Takes `EdgarService` too, purely for ticker->CIK resolution: SEC's
+    XBRL endpoints are keyed by CIK, and sharing that lookup keeps one
+    cached copy of the ticker map instead of two.
+    """
+    return XbrlService(client=client, cache=cache, edgar_service=edgar_service)
+
+
 def get_finnhub_client(request: Request) -> httpx.AsyncClient:
     """Return the shared Finnhub `httpx.AsyncClient` the lifespan constructed at startup."""
     return request.app.state.finnhub_client  # type: ignore[no-any-return]
@@ -150,6 +165,7 @@ def get_claude_service(
     fmp_service: Annotated[FmpService, Depends(get_fmp_service)],
     edgar_service: Annotated[EdgarService, Depends(get_edgar_service)],
     finnhub_service: Annotated[FinnhubService, Depends(get_finnhub_service)],
+    xbrl_service: Annotated[XbrlService, Depends(get_xbrl_service)],
 ) -> ClaudeService:
     """Build a `ClaudeService` wired to every other provider service it grounds answers in.
 
@@ -163,4 +179,5 @@ def get_claude_service(
         fmp_service=fmp_service,
         edgar_service=edgar_service,
         finnhub_service=finnhub_service,
+        xbrl_service=xbrl_service,
     )

@@ -43,7 +43,9 @@ def synthetic_submissions(cik: int = 320193) -> dict[str, Any]:
 SYNTHETIC_FILING_TEXT = "<html><body>Synthetic filing text for testing only.</body></html>"
 
 
-def synthetic_10k_html(*, risk_body: str = "", mdna_body: str = "") -> str:
+def synthetic_10k_html(
+    *, risk_body: str = "", mdna_body: str = "", legal_body: str = "", notes_body: str = ""
+) -> str:
     """A 10-K shaped like a real inline-XBRL filing, with all the usual hazards.
 
     Deliberately includes every pattern the extractor has to survive:
@@ -62,6 +64,34 @@ def synthetic_10k_html(*, risk_body: str = "", mdna_body: str = "") -> str:
     mdna_body = mdna_body or (
         "Revenue increased to $1,234 million in fiscal 2024 from $1,100 million "
         "in fiscal 2023, driven entirely by imaginary demand."
+    )
+    legal_body = legal_body or (
+        "We are party to one fabricated proceeding arising in the ordinary course."
+    )
+    # Item 8 carries a real, numbered note long enough to clear
+    # `_MIN_NOTE_BODY_CHARS`, plus a shorter Note 9 and its own index --
+    # so pointer resolution has to pick the note it was asked for, not the
+    # nearest heading or an index line.
+    notes_body = notes_body or (
+        """<p>Item 8 of this Annual Report contains the audited synthetic financial
+statements, which the extractor is expected to leave out of the excerpt.</p>
+<p><b>INDEX TO NOTES</b></p>
+<table>
+<tr><td>Note 9</td><td>Segment Information</td><td>62</td></tr>
+<tr><td>Note 12</td><td>Commitments and Contingencies</td><td>71</td></tr>
+</table>
+<p><b>Note 9 &#8212; Segment Information</b></p>
+<p>The Company operates as one fabricated reportable segment, which management
+reviews on a consolidated basis. Revenue is disaggregated by imaginary
+geography in the table above. This paragraph is long enough to read as a
+genuine note body rather than an index entry.</p>
+<p><b>Note 12 &#8212; Commitments and Contingencies</b></p>
+<p>The fabricated proceeding described in Item 3 seeks $50 million in imaginary
+damages. The Company believes the claim is without merit and intends to defend
+itself vigorously. No amount has been accrued because a loss is not considered
+probable, and the range of reasonably possible loss cannot be estimated at this
+time. This paragraph exists to be long enough to read as a genuine note body
+rather than an index entry.</p>"""
     )
     return f"""<html>
 <head><style>.hidden {{ display:none; }}</style>
@@ -92,7 +122,7 @@ the extractor is expected to leave it out of the advisor's excerpt.</p>
 <p>{risk_body}</p>
 
 <p><font size="3"><b>Item 3. Legal Proceedings</b></font></p>
-<p>We are party to one fabricated proceeding arising in the ordinary course.</p>
+<p>{legal_body}</p>
 
 <p><b>PART II</b></p>
 <p><font size="3"><b>Item 5: Market for Registrant's Common Equity</b></font></p>
@@ -112,8 +142,7 @@ Market Risk</b></font></p>
 by $4 million.</p>
 
 <p><font size="3"><b>Item 8. Financial Statements and Supplementary Data</b></font></p>
-<p>Item 8 of this Annual Report contains the audited synthetic financial
-statements, which the extractor is expected to leave out of the excerpt.</p>
+{notes_body}
 </body></html>"""
 
 

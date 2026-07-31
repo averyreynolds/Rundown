@@ -34,19 +34,36 @@ reflows, or summarizes -- CLAUDE.md hard rule 2 requires filing-derived
 claims to be traceable to source passages, which only holds if the text
 the advisor cites into is character-for-character what EDGAR served.
 
-What gets kept
---------------
-Only the sections that can bear on a personal equity position. Item 1
-(Business) and Item 8 (Financial Statements) are deliberately excluded:
-Item 1 is long and largely static year to year, and FMP already supplies
-the ratios that Item 8 backs. `FilingDocument.omitted_labels` records
-what was left out so the advisor can say "Item 1 wasn't included in this
+What gets extracted vs what gets sent
+-------------------------------------
+These are two different decisions, and separating them is the point.
+
+*Extraction* is the expensive step and its result is cached, so it takes
+everything that might ever be wanted -- including Risk Factors and the
+financial statements. *Scope* is the cheap per-request decision made in
+`build_filing_document`, and by default it sends MD&A, market risk, legal
+proceedings, and the equity/dividend Item.
+
+Two things follow. Risk Factors can be included on request without
+re-parsing a 1.5 MB document: it's extracted but out of the default scope,
+because across 14 real filings it was both the largest Item (68K chars for
+Apple, 92K for Coca-Cola) and the lowest-signal, being boilerplate that
+barely changes year over year. And the financial statements are on hand
+for `_resolve_pointer_notes` to mine -- far too large to send whole, but
+they are where the cross-references point.
+
+Item 1 (Business) is the one Item still never extracted: long, and largely
+static year to year.
+
+`FilingDocument.omitted_labels` records everything left out for any of
+those reasons, so the advisor can say "that section wasn't in this
 excerpt" rather than the misleading "the filing doesn't mention that."
 """
 
 import re
 import warnings
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
@@ -226,6 +243,46 @@ _MIN_SECTION_BODY_CHARS = 40
 # still sent, just labeled for what it is.
 _SUBSTANTIVE_MIN_CHARS = 1_000
 
+# Financial-statement notes are numbered and headed much like Items, so the
+# same anchored-at-line-start match works on them. Unlike `_ITEM_HEADING`
+# this doesn't enumerate the separators a filer might put after the number
+# -- `(?!\d)` is all that's needed to stop "Note 3" matching inside "Note
+# 30", and the line-start `NOTE` keyword is already tight enough that
+# prose won't match. Whatever dash, colon, or period follows is allowed.
+_NOTE_HEADING = re.compile(
+    r"^[ 	]*NOTE[ 	]+(?P<note>\d{1,2})(?!\d)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# A cross-reference *inside* a pointer section: "Refer to Note 30", "see
+# Note 13", "incorporated by reference to Note 12". The optional second
+# group catches the common two-note list ("Notes 12 and 13"); a longer
+# list resolves only its first two, which understates what was pulled in
+# rather than overstating it.
+_NOTE_REFERENCE = re.compile(
+    r"\bNOTES?[ \t]+(\d{1,2})(?:[ \t]*(?:,|and|&)[ \t]*(\d{1,2}))?\b",
+    re.IGNORECASE,
+)
+
+# A note this short is a line from the notes section's own index, not the
+# note itself. Set well above `_MIN_SECTION_BODY_CHARS` because a
+# table-of-contents entry padded with dot leaders and a page number can
+# clear 40 characters comfortably.
+_MIN_NOTE_BODY_CHARS = 200
+
+# Resolving every note a section names could pull in most of the financial
+# statements. In practice a deferral points at one note; the cap bounds the
+# pathological case.
+_MAX_RESOLVED_NOTES = 3
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedNote:
+    """A financial-statement note pulled in to satisfy a section's cross-reference."""
+
+    label: str
+    text: str
+
 
 @dataclass(frozen=True, slots=True)
 class FilingSection:
@@ -235,6 +292,10 @@ class FilingSection:
     label: str
     text: str
     is_pointer: bool = False
+    # Notes this section deferred to, resolved out of the financial
+    # statements. Non-empty only for pointer sections whose text names a
+    # note by number -- see `_resolve_pointer_notes`.
+    resolved_notes: tuple[ResolvedNote, ...] = ()
 
 
 def _is_pointer(text: str) -> bool:
@@ -270,7 +331,15 @@ class SegmentedFiling:
         return {
             "form": self.form,
             "sections": [
-                {"key": s.key, "label": s.label, "text": s.text, "is_pointer": s.is_pointer}
+                {
+                    "key": s.key,
+                    "label": s.label,
+                    "text": s.text,
+                    "is_pointer": s.is_pointer,
+                    "resolved_notes": [
+                        {"label": n.label, "text": n.text} for n in s.resolved_notes
+                    ],
+                }
                 for s in self.sections
             ],
             "missing_labels": list(self.missing_labels),
@@ -284,7 +353,18 @@ class SegmentedFiling:
             form=payload["form"],
             sections=tuple(
                 FilingSection(
-                    key=s["key"], label=s["label"], text=s["text"], is_pointer=s["is_pointer"]
+                    key=s["key"],
+                    label=s["label"],
+                    text=s["text"],
+                    is_pointer=s["is_pointer"],
+                    # `.get` rather than `[...]`: entries cached before
+                    # pointer resolution existed have no such key, and a
+                    # 7-day filings TTL means those outlive the deploy that
+                    # added it.
+                    resolved_notes=tuple(
+                        ResolvedNote(label=n["label"], text=n["text"])
+                        for n in s.get("resolved_notes", ())
+                    ),
                 )
                 for s in payload["sections"]
             ),
@@ -296,17 +376,42 @@ class SegmentedFiling:
 
 @dataclass(frozen=True, slots=True)
 class _FormPolicy:
-    """Which Items to keep for one form type, and in what priority."""
+    """Which Items to extract for one form type, and which to send by default.
+
+    `titles` and `default_scope` are deliberately different sets.
+    Extraction is the expensive, cached step, so it takes everything that
+    might ever be wanted; deciding what to *send* is cheap and happens per
+    request in `build_filing_document`. Two things fall out of that split:
+    Risk Factors can be included on request without re-parsing, and the
+    financial statements are on hand for `_resolve_pointer_notes` to mine
+    even though they are far too large to send whole.
+    """
 
     titles: dict[str, str]
     priority: tuple[str, ...]
+    default_scope: tuple[str, ...]
     part_scoped: bool
     excluded_labels: tuple[str, ...]
+    # Where this form keeps its financial-statement notes -- the target of
+    # every "refer to Note 12" cross-reference in the sections above.
+    notes_key: str
 
 
 # 10-K Item numbers are unique document-wide, so they need no Part
-# anchoring. Priority orders the budget fill: MD&A and Risk Factors are
-# the sections a position holder actually needs.
+# anchoring. Priority orders the budget fill; `default_scope` decides
+# what's in play at all.
+#
+# Risk Factors is extracted but out of the default scope: measured across
+# 14 real filings it was the single largest Item in the allowlist (68K
+# chars for Apple, 92K for Coca-Cola -- roughly 40% of the whole excerpt)
+# and the lowest-signal, being boilerplate that barely changes year over
+# year. It stays available on request.
+#
+# Item 8 is extracted for a different reason: it is far too large to send,
+# but it is where the cross-references point. Three of seven filers
+# surveyed satisfy Item 3 by deferring straight into the notes ("Refer to
+# Note 30"), so without Item 8 on hand the pointer detector could only
+# announce a gap that the exclusion policy itself created.
 _TEN_K_POLICY = _FormPolicy(
     titles={
         "1A": "Risk Factors",
@@ -319,21 +424,25 @@ _TEN_K_POLICY = _FormPolicy(
             "Management's Discussion and Analysis of Financial Condition and Results of Operations"
         ),
         "7A": "Quantitative and Qualitative Disclosures About Market Risk",
+        "8": "Financial Statements and Supplementary Data",
     },
-    priority=("7", "1A", "7A", "5", "3"),
+    priority=("7", "7A", "5", "3", "1A", "8"),
+    default_scope=("7", "7A", "5", "3"),
     part_scoped=False,
     excluded_labels=(
         "Item 1. Business",
-        "Item 8. Financial Statements and Supplementary Data",
         "Items 9-16 (controls, governance, executive compensation, exhibits)",
     ),
+    notes_key="8",
 )
 
 # A 10-Q reuses Item numbers across Part I and Part II -- "Item 1" is
 # Financial Statements in Part I and Legal Proceedings in Part II -- so
-# these keys must be Part-anchored to mean anything.
+# these keys must be Part-anchored to mean anything. Part I Item 1 is this
+# form's notes source, playing the role Item 8 does in a 10-K.
 _TEN_Q_POLICY = _FormPolicy(
     titles={
+        "I:1": "Financial Statements",
         "I:2": (
             "Management's Discussion and Analysis of Financial Condition and Results of Operations"
         ),
@@ -341,12 +450,11 @@ _TEN_Q_POLICY = _FormPolicy(
         "II:1": "Legal Proceedings",
         "II:1A": "Risk Factors",
     },
-    priority=("I:2", "II:1A", "I:3", "II:1"),
+    priority=("I:2", "I:3", "II:1", "II:1A", "I:1"),
+    default_scope=("I:2", "I:3", "II:1"),
     part_scoped=True,
-    excluded_labels=(
-        "Part I, Item 1. Financial Statements",
-        "Part I, Item 4 and Part II, Items 2-6 (controls, equity sales, exhibits)",
-    ),
+    excluded_labels=("Part I, Item 4 and Part II, Items 2-6 (controls, equity sales, exhibits)",),
+    notes_key="I:1",
 )
 
 _POLICIES = {"10-K": _TEN_K_POLICY, "10-Q": _TEN_Q_POLICY}
@@ -427,11 +535,75 @@ def segment_filing(raw: str, form: str) -> SegmentedFiling:
     sections.sort(key=lambda pair: pair[0])
     return SegmentedFiling(
         form=normalized_form,
-        sections=tuple(section for _, section in sections),
+        sections=tuple(
+            _resolve_pointer_notes([section for _, section in sections], notes_key=policy.notes_key)
+        ),
         missing_labels=tuple(missing),
         policy_excluded_labels=policy.excluded_labels,
         mode="sections",
     )
+
+
+def _resolve_pointer_notes(sections: list[FilingSection], *, notes_key: str) -> list[FilingSection]:
+    """Attach the note each pointer section defers to, mined from the statements.
+
+    This is what turns the pointer detector from a warning into a router.
+    Flagging Item 3 as "too short to carry its substance" is honest but
+    useless on its own; the material the filer deferred to is sitting in
+    the same document, so fetch it.
+    """
+    notes_text = next((section.text for section in sections if section.key == notes_key), None)
+    if notes_text is None:
+        return sections
+
+    return [
+        replace(section, resolved_notes=_referenced_notes(section.text, notes_text))
+        # The notes section is never itself a pointer worth resolving, and
+        # letting it match would mean mining it against itself.
+        if section.is_pointer and section.key != notes_key
+        else section
+        for section in sections
+    ]
+
+
+def _referenced_notes(pointer_text: str, notes_text: str) -> tuple[ResolvedNote, ...]:
+    """Every note `pointer_text` names that can actually be found in `notes_text`."""
+    numbers: list[str] = []
+    for match in _NOTE_REFERENCE.finditer(pointer_text):
+        for group in match.groups():
+            if group is not None and group not in numbers:
+                numbers.append(group)
+
+    resolved = []
+    for number in numbers[:_MAX_RESOLVED_NOTES]:
+        body = _extract_note(notes_text, number)
+        if body is not None:
+            resolved.append(ResolvedNote(label=f"Note {number}", text=body))
+    return tuple(resolved)
+
+
+def _extract_note(notes_text: str, number: str) -> str | None:
+    """Return the verbatim body of `Note <number>`, heading included.
+
+    Picks the longest occurrence for the same reason `_collect_candidates`
+    does: a note number appears both in the notes section's own index and
+    as the real heading, and length separates them without assuming either
+    sits at a particular place in the document.
+    """
+    markers = [(match.start(), match.group("note")) for match in _NOTE_HEADING.finditer(notes_text)]
+
+    best: str | None = None
+    for index, (position, value) in enumerate(markers):
+        if value != number:
+            continue
+        end = markers[index + 1][0] if index + 1 < len(markers) else len(notes_text)
+        body = notes_text[position:end].strip()
+        if best is None or len(body) > len(best):
+            best = body
+
+    if best is None or len(best) < _MIN_NOTE_BODY_CHARS:
+        return None
+    return best
 
 
 def _format_label(key: str, title: str, *, part_scoped: bool) -> str:
@@ -514,6 +686,7 @@ class FilingDocument:
     included_labels: tuple[str, ...]
     omitted_labels: tuple[str, ...]
     pointer_labels: tuple[str, ...]
+    resolved_pointer_labels: tuple[str, ...]
     was_truncated: bool
 
     def provenance_note(self) -> str:
@@ -533,6 +706,14 @@ class FilingDocument:
                 "question concerns them, say they are outside this excerpt rather "
                 "than saying the filing does not address them."
             )
+        if self.resolved_pointer_labels:
+            note += (
+                " These sections satisfy their Item by cross-reference rather than "
+                "by restating the content, and the financial-statement note each "
+                "one points to has been located and included directly beneath it, "
+                f"under its own heading: {'; '.join(self.resolved_pointer_labels)}. "
+                "Treat the note as that section's substance."
+            )
         if self.pointer_labels:
             note += (
                 " These sections are included but are too short to contain the "
@@ -548,7 +729,12 @@ class FilingDocument:
         return note
 
 
-def build_filing_document(segmented: SegmentedFiling, max_chars: int) -> FilingDocument:
+def build_filing_document(
+    segmented: SegmentedFiling,
+    max_chars: int,
+    *,
+    scope: Iterable[str] | None = None,
+) -> FilingDocument:
     """Fit `segmented` into `max_chars`, dropping the least relevant sections first.
 
     Sections are *selected* in policy priority order (so a filing too
@@ -561,6 +747,12 @@ def build_filing_document(segmented: SegmentedFiling, max_chars: int) -> FilingD
         segmented: Output of `segment_filing`.
         max_chars: Character budget for the assembled excerpt. Must be
             positive.
+        scope: Which Item keys to consider, overriding the form's default
+            scope. `segment_filing` extracts more than is sent by default
+            -- Risk Factors, and the financial statements -- so widening
+            the scope costs nothing but budget, no re-parse. Anything
+            extracted but out of scope is reported in `omitted_labels`, so
+            narrowing never silently hides a section.
 
     Raises:
         ValueError: if `max_chars` is not positive.
@@ -570,10 +762,30 @@ def build_filing_document(segmented: SegmentedFiling, max_chars: int) -> FilingD
 
     policy = _POLICIES.get(segmented.form)
     order = policy.priority if policy is not None else ()
-    by_key = {section.key: section for section in segmented.sections}
+    # Gated on `mode`, not on whether a policy exists. An unsegmented 10-K
+    # still resolves a policy, but its single pseudo-section is keyed
+    # `full` and would fall outside any Item scope -- which would empty the
+    # excerpt for exactly the filings the unsegmented fallback exists to
+    # rescue.
+    if segmented.mode != "sections":
+        in_scope: set[str] | None = None
+    elif scope is not None:
+        in_scope = set(scope)
+    elif policy is not None:
+        in_scope = set(policy.default_scope)
+    else:
+        in_scope = None
 
-    ranked = [by_key[key] for key in order if key in by_key]
-    ranked.extend(section for section in segmented.sections if section.key not in set(order))
+    def _wanted(key: str) -> bool:
+        return in_scope is None or key in in_scope
+
+    by_key = {section.key: section for section in segmented.sections}
+    ranked = [by_key[key] for key in order if key in by_key and _wanted(key)]
+    ranked.extend(
+        section
+        for section in segmented.sections
+        if section.key not in set(order) and _wanted(section.key)
+    )
 
     kept: dict[str, str] = {}
     dropped: list[str] = []
@@ -581,6 +793,7 @@ def build_filing_document(segmented: SegmentedFiling, max_chars: int) -> FilingD
     remaining = max_chars
 
     for section in ranked:
+        payload = _section_payload(section)
         # The blank line between sections is part of the final string, so
         # it has to come out of the budget too -- charging it for every
         # section after the first makes the accounting exact against the
@@ -592,35 +805,73 @@ def build_filing_document(segmented: SegmentedFiling, max_chars: int) -> FilingD
             dropped.append(section.label)
             continue
         budget = remaining - overhead
-        if len(section.text) <= budget:
-            kept[section.key] = section.text
-            remaining -= overhead + len(section.text)
+        if len(payload) <= budget:
+            kept[section.key] = payload
+            remaining -= overhead + len(payload)
         else:
-            kept[section.key] = section.text[:budget]
+            kept[section.key] = payload[:budget]
             remaining = 0
             was_truncated = True
 
     parts = []
     included_labels = []
     pointer_labels = []
+    resolved_pointer_labels = []
     for section in segmented.sections:
         if section.key not in kept:
             continue
         parts.append(_section_header(section.label) + kept[section.key])
         included_labels.append(section.label)
-        if section.is_pointer:
+        if not section.is_pointer:
+            continue
+        # A pointer whose note was found is no longer a gap, so it must not
+        # be reported as one -- that's the difference between the detector
+        # warning about missing material and the router having fetched it.
+        if section.resolved_notes:
+            notes = ", ".join(note.label for note in section.resolved_notes)
+            resolved_pointer_labels.append(f"{section.label} -> {notes}")
+        else:
             pointer_labels.append(section.label)
+
+    out_of_scope = tuple(
+        section.label for section in segmented.sections if not _wanted(section.key)
+    )
 
     return FilingDocument(
         text=_SECTION_SEPARATOR.join(parts),
         included_labels=tuple(included_labels),
-        omitted_labels=tuple(dropped) + segmented.missing_labels + segmented.policy_excluded_labels,
+        omitted_labels=tuple(dropped)
+        + out_of_scope
+        + segmented.missing_labels
+        + segmented.policy_excluded_labels,
         pointer_labels=tuple(pointer_labels),
+        resolved_pointer_labels=tuple(resolved_pointer_labels),
         was_truncated=was_truncated,
     )
 
 
 _SECTION_SEPARATOR = "\n\n"
+
+
+def _section_payload(section: FilingSection) -> str:
+    """A section's own text plus any note it deferred to, as one budgeted block.
+
+    Treated as a unit so the budget fitter charges a pointer section for
+    what it actually contributes. Item 3 is 76 characters on its own and
+    several thousand once its note is attached; billing it at 76 would let
+    it displace something larger that was ranked above it.
+    """
+    if not section.resolved_notes:
+        return section.text
+    return _SECTION_SEPARATOR.join(
+        [
+            section.text,
+            *(
+                _section_header(f"{section.label} -- {note.label} (resolved)") + note.text
+                for note in section.resolved_notes
+            ),
+        ]
+    )
 
 
 def _section_header(label: str) -> str:

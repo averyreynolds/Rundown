@@ -7,6 +7,8 @@ the codebase (CLAUDE.md hard rules 1 and 2), so this suite is organized
 around the plan's explicit test scenarios for U8, not just line coverage.
 """
 
+import datetime as dt
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.cache.cache_repository import CacheRepository
 from app.schemas.advisor import ContextRefs, FilingRef
+from app.schemas.xbrl import XbrlFact, XbrlFacts
 from app.services.claude_service import (
     _MAX_FILING_CHARS,
     _SAFE_FALLBACK_MESSAGE,
@@ -29,6 +32,7 @@ from app.services.errors import AdvisorUnavailableError, InsufficientContextErro
 from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
 from app.services.snaptrade_service import SnapTradeService
+from app.services.xbrl_service import XbrlService
 from tests.fixtures.synthetic_advisor import fake_anthropic_client as _fake_anthropic_client
 from tests.fixtures.synthetic_filing import (
     SYNTHETIC_FILING_TEXT,
@@ -43,6 +47,7 @@ from tests.fixtures.synthetic_positions import (
     synthetic_balance,
     synthetic_stock_position,
 )
+from tests.fixtures.synthetic_xbrl import synthetic_company_facts
 
 _RATIOS_URL = "https://financialmodelingprep.com/stable/ratios"
 _KEY_METRICS_URL = "https://financialmodelingprep.com/stable/key-metrics-ttm"
@@ -52,6 +57,31 @@ _FILING_TEXT_URL = (
     "https://www.sec.gov/Archives/edgar/data/320193/000032019324000123/synthetic-10k.htm"
 )
 _NEWS_URL = "https://finnhub.io/api/v1/company-news"
+_COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
+
+
+def _mock_symbol_providers() -> None:
+    """Mock every host a symbol-scoped chat reaches out to.
+
+    Needed even by tests that assert nothing about fundamentals, news, or
+    facts: without respx active those calls escape to the real network and
+    only pass because the advisor tolerates provider failures, which is
+    exactly the live-API dependency CLAUDE.md's testing rules forbid.
+
+    `AAPL` is deliberately absent from `SYNTHETIC_TICKER_MAP`, so CIK
+    resolution fails and no XBRL fetch follows -- these tests are about
+    the advisor's boundaries, not its facts context.
+    """
+    respx.get(_RATIOS_URL).mock(return_value=httpx.Response(200, json=[{"symbol": "AAPL"}]))
+    respx.get(_KEY_METRICS_URL).mock(return_value=httpx.Response(200, json=[{"symbol": "AAPL"}]))
+    respx.get(_NEWS_URL).mock(return_value=httpx.Response(200, json=[]))
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+
+
+def _mock_company_facts() -> None:
+    respx.get(_COMPANY_FACTS_URL).mock(
+        return_value=httpx.Response(200, json=synthetic_company_facts())
+    )
 
 
 async def _build_claude_service(
@@ -74,6 +104,11 @@ async def _build_claude_service(
         positions=positions if positions is not None else [synthetic_stock_position()],
     )
     snaptrade_service = SnapTradeService(client=snaptrade_client, cache=cache)
+    # One EDGAR client shared by the filings and XBRL services, as the real
+    # lifespan does -- SEC's XBRL API is the same host under the same
+    # `User-Agent` requirement.
+    edgar_client = httpx.AsyncClient(headers={"User-Agent": "Rundown Test (test@example.com)"})
+    edgar_service = EdgarService(client=edgar_client, cache=cache)
 
     return ClaudeService(
         client=anthropic_client,  # type: ignore[arg-type]
@@ -82,12 +117,14 @@ async def _build_claude_service(
         fmp_service=FmpService(
             client=httpx.AsyncClient(base_url="https://financialmodelingprep.com"), cache=cache
         ),
-        edgar_service=EdgarService(
-            client=httpx.AsyncClient(headers={"User-Agent": "Rundown Test (test@example.com)"}),
-            cache=cache,
-        ),
+        edgar_service=edgar_service,
         finnhub_service=FinnhubService(
             client=httpx.AsyncClient(base_url="https://finnhub.io"), cache=cache
+        ),
+        xbrl_service=XbrlService(
+            client=edgar_client,
+            cache=cache,
+            edgar_service=edgar_service,
         ),
     )
 
@@ -108,6 +145,7 @@ async def test_chat_grounds_answer_only_in_the_symbols_asked_about(
     respx.get(_NEWS_URL, params={"symbol": "AAPL"}).mock(
         return_value=httpx.Response(200, json=synthetic_news_items(1))
     )
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
     anthropic_client = _fake_anthropic_client("Your AAPL position is 100% of your portfolio.")
 
     async with db_session_factory() as session:
@@ -151,6 +189,7 @@ async def test_filing_summarization_returns_citations_from_the_source_filing(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
     respx.get(_SUBMISSIONS_URL).mock(return_value=httpx.Response(200, json=synthetic_submissions()))
     respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=SYNTHETIC_FILING_TEXT))
     citation = SimpleNamespace(cited_text="Synthetic filing text for testing only.")
@@ -219,6 +258,7 @@ async def _document_block_for_filing(
 ) -> tuple[dict[str, Any], str]:
     """Run one filing through `chat` and return `(document_block, prompt_text)`."""
     respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
     respx.get(_SUBMISSIONS_URL).mock(return_value=httpx.Response(200, json=synthetic_submissions()))
     respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=filing_html))
 
@@ -248,9 +288,13 @@ async def test_only_portfolio_relevant_sections_are_sent(
     data = document_block["source"]["data"]
 
     assert "Revenue increased to $1,234 million" in data  # Item 7, MD&A
-    assert "single fabricated supplier" in data  # Item 1A, Risk Factors
-    assert "long and static" not in data  # Item 1, excluded
-    assert "audited synthetic financial" not in data  # Item 8, excluded
+    assert "fabricated interest expense" in data  # Item 7A, market risk
+    assert "long and static" not in data  # Item 1, never extracted
+    # Both extracted, both out of the default scope: Risk Factors because it
+    # is the largest and lowest-signal Item, Item 8 because it exists to be
+    # mined for referenced notes rather than sent whole.
+    assert "single fabricated supplier" not in data  # Item 1A
+    assert "Segment Information" not in data  # Item 8
     assert "XBRL-ONLY-FACT-DO-NOT-SURFACE" not in data  # hidden iXBRL fact
     assert "[section excerpt]" in document_block["title"]
 
@@ -300,9 +344,11 @@ _DIRECTIVE_QUESTIONS = [
 
 
 @pytest.mark.parametrize("question", _DIRECTIVE_QUESTIONS)
+@respx.mock
 async def test_directive_questions_are_sent_with_the_no_directive_system_prompt(
     db_session_factory: async_sessionmaker[AsyncSession], question: str
 ) -> None:
+    _mock_symbol_providers()
     anthropic_client = _fake_anthropic_client(
         "Here's what's relevant to that position based on your data."
     )
@@ -327,9 +373,11 @@ async def test_directive_questions_are_sent_with_the_no_directive_system_prompt(
         "Now is a good time to buy more.",
     ],
 )
+@respx.mock
 async def test_directive_model_response_is_replaced_with_the_safe_fallback(
     db_session_factory: async_sessionmaker[AsyncSession], directive_response: str
 ) -> None:
+    _mock_symbol_providers()
     anthropic_client = _fake_anthropic_client(directive_response)
 
     async with db_session_factory() as session:
@@ -340,9 +388,11 @@ async def test_directive_model_response_is_replaced_with_the_safe_fallback(
     assert response.citations == []
 
 
+@respx.mock
 async def test_neutral_model_response_is_passed_through_unmodified(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    _mock_symbol_providers()
     anthropic_client = _fake_anthropic_client(
         "Your AAPL position has an unrealized gain of $500, per the provided data."
     )
@@ -377,6 +427,7 @@ async def test_output_filter_catches_directive_language_reflected_from_context(
     respx.get(_KEY_METRICS_URL, params={"symbol": "AAPL"}).mock(
         return_value=httpx.Response(200, json=[])
     )
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
     anthropic_client = _fake_anthropic_client(
         "Recent news: analysts say consider buying more shares."
     )
@@ -386,6 +437,230 @@ async def test_output_filter_catches_directive_language_reflected_from_context(
         response = await service.chat("Any news on AAPL?", ContextRefs(symbols=["AAPL"]))
 
     assert response.answer == _SAFE_FALLBACK_MESSAGE
+
+
+# --- Structured XBRL facts as grounding ------------------------------------
+
+
+def _prompt_text(anthropic_client: SimpleNamespace) -> str:
+    content = anthropic_client.messages.create.await_args.kwargs["messages"][0]["content"]
+    return str(content[-1]["text"])
+
+
+def _document_block(anthropic_client: SimpleNamespace) -> dict[str, Any]:
+    content = anthropic_client.messages.create.await_args.kwargs["messages"][0]["content"]
+    return next(block for block in content if block["type"] == "document")
+
+
+@respx.mock
+async def test_facts_reach_the_advisor_with_accession_provenance(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The definition of done for this work: numbers in context, each
+    traceable to the filing that reported it."""
+    _mock_symbol_providers()
+    _mock_company_facts()
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(session, anthropic_client=anthropic_client)
+        await service.chat("How has revenue trended?", ContextRefs(symbols=["SYNT"]))
+
+    prompt = _prompt_text(anthropic_client)
+    assert "SEC XBRL structured facts for SYNT" in prompt
+    assert "Revenue (USD):" in prompt
+    assert "accession 0000000000-25-000001" in prompt
+
+
+@respx.mock
+async def test_facts_context_reports_which_line_items_were_unavailable(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Hard rule 2: without this the model reports that the company never
+    disclosed a figure, when only this allowlist came back empty."""
+    _mock_symbol_providers()
+    _mock_company_facts()
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(session, anthropic_client=anthropic_client)
+        await service.chat("What was R&D spend?", ContextRefs(symbols=["SYNT"]))
+
+    prompt = _prompt_text(anthropic_client)
+    assert "No values were available in SEC's structured data" in prompt
+    assert "R&D expense" in prompt
+    assert "not as figures the company failed to report" in prompt
+
+
+@respx.mock
+async def test_a_referenced_filing_pulls_in_its_own_symbols_facts(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Asking about a 10-K is asking about that company, even when the
+    caller listed no symbols."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
+    respx.get(_SUBMISSIONS_URL).mock(return_value=httpx.Response(200, json=synthetic_submissions()))
+    respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=synthetic_10k_html()))
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(session, anthropic_client=anthropic_client)
+        await service.chat(
+            "What does this filing say about revenue?",
+            ContextRefs(
+                filing_ref=FilingRef(symbol="SYNT", accession_number="0000320193-24-000123")
+            ),
+        )
+
+    prompt = _prompt_text(anthropic_client)
+    assert "SEC XBRL structured facts for SYNT" in prompt
+    # None of the synthetic facts came from the referenced accession, so
+    # nothing should claim to have.
+    assert "[reported by the filing in question]" not in prompt
+
+
+def test_rendered_facts_mark_the_ones_the_referenced_filing_reported() -> None:
+    """Selection is symbol-wide, so the model needs the marker to tell
+    "this filing reported" from "the company has reported"."""
+    from app.services.claude_service import _render_xbrl_facts
+
+    def fact(accession: str, *, referenced: bool) -> XbrlFact:
+        return XbrlFact(
+            label="Revenue",
+            concept="Revenues",
+            taxonomy="us-gaap",
+            value=Decimal("500"),
+            unit="USD",
+            period_start=dt.date(2024, 9, 29),
+            period_end=dt.date(2025, 9, 27),
+            fiscal_year=2025,
+            fiscal_period="FY",
+            form="10-K",
+            accession_number=accession,
+            filed=dt.date(2025, 10, 31),
+            from_referenced_filing=referenced,
+        )
+
+    text = _render_xbrl_facts(
+        XbrlFacts(
+            symbol="SYNT",
+            facts=[fact("acc-referenced", referenced=True), fact("acc-other", referenced=False)],
+            missing_labels=[],
+        ),
+        dt.datetime(2026, 7, 31, tzinfo=dt.UTC),
+    )
+
+    referenced_line = next(line for line in text.splitlines() if "acc-referenced" in line)
+    other_line = next(line for line in text.splitlines() if "acc-other" in line)
+    assert "[reported by the filing in question]" in referenced_line
+    assert "[reported by the filing in question]" not in other_line
+
+
+@respx.mock
+async def test_facts_are_skipped_when_the_symbol_has_none(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """An all-absent snapshot is context that says nothing; it should not
+    crowd out the narrative excerpt."""
+    _mock_symbol_providers()
+    respx.get(_COMPANY_FACTS_URL).mock(return_value=httpx.Response(200, json={"facts": {}}))
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[synthetic_stock_position(symbol="SYNT")],
+        )
+        await service.chat("How has revenue trended?", ContextRefs(symbols=["SYNT"]))
+
+    assert "SEC XBRL structured facts" not in _prompt_text(anthropic_client)
+
+
+@respx.mock
+async def test_an_xbrl_outage_does_not_take_down_the_advisor(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _mock_symbol_providers()
+    respx.get(_COMPANY_FACTS_URL).mock(return_value=httpx.Response(503))
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[synthetic_stock_position(symbol="SYNT")],
+        )
+        response = await service.chat("How is SYNT doing?", ContextRefs(symbols=["SYNT"]))
+
+    assert response.answer
+    assert "SEC XBRL structured facts" not in _prompt_text(anthropic_client)
+
+
+async def test_system_prompt_distinguishes_the_two_filing_grounding_modes() -> None:
+    """Facts cite an accession number; prose cites a quoted line. The model
+    has to be told which is which, or it paraphrases a verifiable figure
+    into an approximation."""
+    from app.services.claude_service import _SYSTEM_PROMPT
+
+    assert "quote the specific line or sentence" in _SYSTEM_PROMPT
+    assert "accession" in _SYSTEM_PROMPT
+    assert "do not round, rescale, or restate it" in _SYSTEM_PROMPT
+
+
+# --- Prompt caching ---------------------------------------------------------
+
+
+@respx.mock
+async def test_filing_document_block_is_prompt_cached(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A published filing is immutable and is the largest thing in the
+    request, so it's re-sent byte-identical on every follow-up question."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
+    respx.get(_SUBMISSIONS_URL).mock(return_value=httpx.Response(200, json=synthetic_submissions()))
+    respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=synthetic_10k_html()))
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(session, anthropic_client=anthropic_client)
+        await service.chat(
+            "Summarize this filing.",
+            ContextRefs(
+                filing_ref=FilingRef(symbol="SYNT", accession_number="0000320193-24-000123")
+            ),
+        )
+
+    assert _document_block(anthropic_client)["cache_control"] == {"type": "ephemeral"}
+
+
+@respx.mock
+async def test_the_cache_breakpoint_precedes_every_volatile_block(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Caching is a prefix match, so the cached document has to sit ahead
+    of the question and the assembled context or nothing is reusable."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
+    respx.get(_SUBMISSIONS_URL).mock(return_value=httpx.Response(200, json=synthetic_submissions()))
+    respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=synthetic_10k_html()))
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(session, anthropic_client=anthropic_client)
+        await service.chat(
+            "Summarize this filing.",
+            ContextRefs(
+                filing_ref=FilingRef(symbol="SYNT", accession_number="0000320193-24-000123")
+            ),
+        )
+
+    content = anthropic_client.messages.create.await_args.kwargs["messages"][0]["content"]
+    cached = [index for index, block in enumerate(content) if "cache_control" in block]
+    assert cached == [0]
+    assert content[-1]["type"] == "text"
 
 
 def test_lexical_filter_documented_gap_semantic_but_not_lexical_phrasing() -> None:
@@ -401,9 +676,11 @@ def test_lexical_filter_documented_gap_semantic_but_not_lexical_phrasing() -> No
 # --- Claude API failures never produce a partial/garbled response ----------
 
 
+@respx.mock
 async def test_claude_api_failure_raises_advisor_unavailable(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    _mock_symbol_providers()
     api_error = APIError(
         "boom", request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"), body=None
     )
@@ -418,9 +695,11 @@ async def test_claude_api_failure_raises_advisor_unavailable(
 # --- Parity with U2's own domain functions ----------------------------------
 
 
+@respx.mock
 async def test_portfolio_context_flags_concentrated_holdings_via_u2_directly(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    _mock_symbol_providers()
     """A single 100%-allocated holding must be flagged as concentrated --
     proves `flag_concentrated` (U2) is actually invoked, not just referenced."""
     anthropic_client = _fake_anthropic_client()
