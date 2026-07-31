@@ -1,0 +1,24 @@
+---
+version: 1
+slug: "frontend-app-page-tsx"
+primary_target: "frontend/app/page.tsx"
+related_targets: []
+---
+
+## Home Dashboard — Surface Brief
+
+**Scope / mode:** Operate. This is the app's primary daily-use screen — Avery opens it to see their real portfolio and decide whether anything needs attention.
+
+**Job and audience:** Avery (single user), checking in briefly on a real Schwab account via SnapTrade — could also be shown cold to an outside viewer (portfolio piece). Needs a fast, trustworthy overview, not a sales pitch.
+
+**Outcome and proof:** Primary task is portfolio overview — positions, weights, values, P&L — read at a glance. Per-position "does this matter" signal and AI-advisor entry point are present but secondary annotations on top of the overview, not the lead. All figures ship against synthetic fixtures for this pass (no live backend yet); every number must look like real brokerage data in shape and precision, not placeholder lorem values, and must carry a source + "as of" timestamp per CLAUDE.md.
+
+**Selected direction:** Category-standard consumer-fintech dashboard, chosen deliberately over two invented alternatives (a newsroom-producer's-rundown sheet, an airport split-flap board) during this shape pass's direction round — recorded in PRODUCT.md. Craft bar: **Robinhood, Copilot Money, Wealthfront** — clean cards, confident numerals, calm restraint — not enterprise-SaaS density (Linear/Stripe) and not professional-terminal density (Bloomberg/Schwab). Color strategy: Restrained (neutrals + one accent). The accent and any status color must never double as a buy/sell or gain/loss directive — reserve red/green-adjacent hues strictly for data freshness/status (fresh vs. stale vs. error), and use a neutral, non-stoplight treatment for P&L direction (e.g. subtle up/down glyph + numeral, not a saturated red/green wash) so the surface can't be read as advice. Type: workhorse system/UI sans (e.g. Inter/system-ui stack), tabular figures for all numeric columns. Scene: checked on a laptop at a desk in normal daylight, not a dark trading floor — light mode is the default register; dark mode is a reasonable follow-on but not required to ship first.
+
+**Scope and boundaries:** Full production-ready screen, Next.js App Router, server components by default. Target list size: 5–15 positions typical, degrade gracefully to ~30 (compact rows / scroll, not pagination). Untouched: all CLAUDE.md hard rules — no trade/order/transfer UI of any kind, no directive advisor language anywhere in copy, no unsourced or uncited claims, no API keys or third-party SDK calls from the frontend. No additional anti-goals beyond those rules.
+
+**States and ranges:** (1) First-run/empty — no SnapTrade connection yet; screen should prompt connection, not show a hollow dashboard. (2) Loading — initial fetch in flight. (3) Stale — cached data past its freshness window, flagged visibly per position and/or portfolio-wide, never silently shown as current. (4) Error — fetch/API failure, distinct from empty, with a way to retry. (5) Happy path — 5–15 positions, mixed gains/losses, at least one position with a flagged "worth a look" signal and one filing/news citation surfaced.
+
+**Interaction and layout:** Hierarchy top to bottom: portfolio-level summary (total value, day/period change, allocation shape) → ranked holdings list (each row: ticker/name, weight, value, P&L, freshness-safe status chip) → advisor entry point, either persistent (e.g. a docked/contextual affordance) or reachable from any row, scoped to that position's data when opened from a row. Each position row expands or links to per-position detail (fundamentals, the specific filing/news item behind its signal, cited). Every data point on screen — position values, fundamentals, news, filing references — carries its source and "as of" timestamp, not just a global refresh time. Responsive: collapses to a single scrollable column on mobile; summary stays pinned/visible, holdings list becomes the primary scroll surface.
+
+**Constraints and open decisions:** `frontend/` is not yet scaffolded — this brief targets the eventual home route (`frontend/app/page.tsx` or equivalent) and should be built against synthetic fixtures matching the backend's intended Pydantic contracts, not live calls. Per-data-type cache TTLs remain undecided at the product level (noted in PRODUCT.md) — the UI should surface *whatever* freshness timestamp it's given, not assume a specific cadence. Component vocabulary established here (summary card, holdings row, status chip, advisor entry) should be treated as reusable building blocks for later surfaces (position detail, filings, news) rather than one-off. Dark mode, exact palette values, and font selection are implementation-time decisions within the Restrained/workhorse-sans direction stated above, not fixed by this brief.

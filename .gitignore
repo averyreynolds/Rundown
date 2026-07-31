@@ -1,0 +1,10 @@
+# OS / editor
+.DS_Store
+.idea/
+
+# Impeccable: local session cache and per-run decision logs -- keyed to
+# this machine's absolute paths and session IDs, not durable project
+# state. The design system itself lives in DESIGN.md / .impeccable/design.json
+# and .impeccable/surfaces/, which are tracked.
+.impeccable/hook.cache.json
+.impeccable/questions/

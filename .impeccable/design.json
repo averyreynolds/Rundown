@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-31T00:00:00Z",
+  "title": "Design System: Rundown",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Rundown Blue",
+        "canonical": "#3654d6",
+        "tonalRamp": ["#0f1a52", "#182a7d", "#213aa0", "#2a48bd", "#3654d6", "#6f86e3", "#a6b4ee", "#dbe1f9"]
+      },
+      "accent-ink": {
+        "role": "primary",
+        "displayName": "Rundown Blue, Deep",
+        "canonical": "#2743b3",
+        "tonalRamp": ["#0c1240", "#132066", "#1c2f8c", "#2138a0", "#2743b3", "#5164c9", "#8a97dc", "#c6cdef"]
+      },
+      "accent-soft": {
+        "role": "primary",
+        "displayName": "Rundown Blue, Soft",
+        "canonical": "#eef1fc",
+        "tonalRamp": ["#c4cdef", "#d3daf4", "#e0e6f8", "#e8edfa", "#eef1fc", "#f3f5fd", "#f8fafe", "#fbfcff"]
+      },
+      "status-stale": {
+        "role": "secondary",
+        "displayName": "Stale Amber",
+        "canonical": "#92640a",
+        "tonalRamp": ["#2e1f03", "#4c3306", "#6a4708", "#7f5509", "#92640a", "#b98524", "#dcac53", "#f2d18f"]
+      },
+      "status-stale-soft": {
+        "role": "secondary",
+        "displayName": "Stale Amber, Soft",
+        "canonical": "#fbf1dc",
+        "tonalRamp": ["#eed8ab", "#f2e0bd", "#f6e7cc", "#f9eed6", "#fbf1dc", "#fcf5e4", "#fdf8ec", "#fefbf4"]
+      },
+      "status-error": {
+        "role": "secondary",
+        "displayName": "Error Red",
+        "canonical": "#a83f3f",
+        "tonalRamp": ["#361414", "#571f1f", "#792b2b", "#903434", "#a83f3f", "#c0696a", "#d89b9b", "#eecccc"]
+      },
+      "status-error-soft": {
+        "role": "secondary",
+        "displayName": "Error Red, Soft",
+        "canonical": "#fbecec",
+        "tonalRamp": ["#eec4c4", "#f2d3d3", "#f6e0e0", "#f9e7e7", "#fbecec", "#fcf2f2", "#fdf7f7", "#fefbfb"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#14161a",
+        "tonalRamp": ["#000000", "#0a0b0d", "#14161a", "#2a2d33", "#5b6068", "#8a8f96", "#c2c4c8", "#e6e5e1"]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Ink Secondary",
+        "canonical": "#5b6068",
+        "tonalRamp": ["#1c1e21", "#33363b", "#4a4d53", "#53565c", "#5b6068", "#797d84", "#a3a6ab", "#d0d1d4"]
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Ink Faint",
+        "canonical": "#6b7280",
+        "tonalRamp": ["#22242a", "#3a3d45", "#51555f", "#5e626c", "#6b7280", "#8a8f99", "#b1b5bd", "#dadce0"]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#f7f7f5",
+        "tonalRamp": ["#c9c9c2", "#d8d8d2", "#e4e4de", "#eeeee9", "#f7f7f5", "#faf9f8", "#fcfbfa", "#fefefd"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#d9d9d9", "#e6e6e6", "#f0f0f0", "#f8f8f8", "#ffffff", "#ffffff", "#ffffff", "#ffffff"]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Border",
+        "canonical": "#e6e5e1",
+        "tonalRamp": ["#8a8880", "#a5a39b", "#bebcb4", "#d2d0c8", "#e6e5e1", "#eeede9", "#f4f3f0", "#faf9f8"]
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "Border Strong",
+        "canonical": "#d4d3ce",
+        "tonalRamp": ["#78766e", "#948f87", "#aeaba1", "#c1beb6", "#d4d3ce", "#e0dfdb", "#eceae7", "#f6f5f3"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Total portfolio value only — the single largest figure per view." },
+      "title": { "displayName": "Title", "purpose": "Page wordmark and state headings." },
+      "body": { "displayName": "Body", "purpose": "Default working size: row text, chat messages, descriptive copy." },
+      "label": { "displayName": "Label", "purpose": "Chips, section eyebrows, source/as-of lines, detail labels." },
+      "mono": { "displayName": "Mono", "purpose": "Filing accession numbers and citation source strings only." }
+    },
+    "shadows": [
+      { "name": "overlay-trigger", "value": "0 10px 15px -3px rgba(20,22,26,0.10)", "purpose": "The advisor's floating action button — the only in-flow element allowed a shadow, because it visually floats above the page." },
+      { "name": "overlay-drawer", "value": "0 20px 25px -5px rgba(0,0,0,0.10), 0 8px 10px -6px rgba(0,0,0,0.10)", "purpose": "The advisor's slide-in drawer panel." }
+    ],
+    "motion": [
+      { "name": "color-transition", "value": "transition-colors (Tailwind default, ~150ms ease)", "purpose": "Hover states on buttons, links, and bordered interactive cards." },
+      { "name": "trigger-lift", "value": "transform: translateY(-2px) on hover", "purpose": "The advisor's floating trigger lifts slightly on hover." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button (Ink)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "State-recovery CTA — 'Connect your brokerage', 'Try again'.",
+      "html": "<button class=\"ds-btn-primary\">Connect your brokerage</button>",
+      "css": ".ds-btn-primary { background: #14161a; color: #ffffff; font-size: 0.875rem; font-weight: 500; padding: 10px 20px; border-radius: 9999px; border: none; transition: background-color 0.15s ease; } .ds-btn-primary:hover { background: rgba(20,22,26,0.85); } .ds-btn-primary:focus-visible { outline: 2px solid #3654d6; outline-offset: 2px; }"
+    },
+    {
+      "name": "Accent Button",
+      "kind": "button",
+      "refersTo": "button-accent",
+      "description": "Advisor chat 'Ask' submit button — the accent's one filled-button use.",
+      "html": "<button class=\"ds-btn-accent\">Ask</button>",
+      "css": ".ds-btn-accent { background: #3654d6; color: #ffffff; font-size: 0.875rem; font-weight: 500; padding: 10px 16px; border-radius: 9999px; border: none; transition: background-color 0.15s ease; } .ds-btn-accent:hover { background: #2743b3; } .ds-btn-accent:focus-visible { outline: 2px solid #2743b3; outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "chip-flag",
+      "description": "Three-tone pill: stale / error / flag. The system's only filled semantic-color primitive.",
+      "html": "<span class=\"ds-chip ds-chip-flag\">Worth a look</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; padding: 4px 10px; font-size: 0.75rem; font-weight: 500; line-height: 1; } .ds-chip-flag { background: #eef1fc; color: #2743b3; } .ds-chip-stale { background: #fbf1dc; color: #92640a; } .ds-chip-error { background: #fbecec; color: #a83f3f; }"
+    },
+    {
+      "name": "Card (Surface)",
+      "kind": "card",
+      "refersTo": "card-surface",
+      "description": "Top-level bordered container — portfolio summary, holdings list, empty/error states.",
+      "html": "<div class=\"ds-card\"><p class=\"ds-card-eyebrow\">Total value</p><p class=\"ds-card-figure\">$62,157.20</p></div>",
+      "css": ".ds-card { background: #ffffff; border: 1px solid #e6e5e1; border-radius: 16px; padding: 24px 28px; } .ds-card-eyebrow { font-size: 0.875rem; color: #5b6068; margin: 0; } .ds-card-figure { font-size: 2.25rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1; color: #14161a; font-variant-numeric: tabular-nums; margin: 6px 0 0; }"
+    },
+    {
+      "name": "P&L Value",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Gain/loss display: neutral ink + directional glyph, never red/green. Compliance-driven — see DESIGN.md Colors > Named Rules.",
+      "html": "<span class=\"ds-pnl\"><span class=\"ds-pnl-glyph\">&#9650;</span><span class=\"ds-pnl-amount\">+$1,725.00</span><span class=\"ds-pnl-pct\">(+22.03%)</span></span>",
+      "css": ".ds-pnl { display: inline-flex; align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums; font-size: 0.9375rem; } .ds-pnl-glyph { font-size: 0.65em; color: #6b7280; } .ds-pnl-amount { font-weight: 500; color: #14161a; } .ds-pnl-pct { color: #5b6068; }"
+    },
+    {
+      "name": "Holding Row",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Expandable list row: avatar-initials, symbol/name, value/weight, P&L. Signature component of the holdings list.",
+      "html": "<button class=\"ds-row\"><span class=\"ds-row-avatar\">AA</span><span class=\"ds-row-name\"><strong>AAPL</strong><small>Apple Inc.</small></span><span class=\"ds-row-value\">$9,555.00<small>15.4%</small></span></button>",
+      "css": ".ds-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 16px 4px; border-bottom: 1px solid #e6e5e1; background: none; border-left: none; border-right: none; border-top: none; text-align: left; transition: background-color 0.15s ease; } .ds-row:hover { background: rgba(247,247,245,0.6); } .ds-row-avatar { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 9999px; background: #f7f7f5; color: #5b6068; font-size: 0.75rem; font-weight: 600; flex-shrink: 0; } .ds-row-name strong { display: block; font-size: 0.875rem; font-weight: 500; color: #14161a; } .ds-row-name small { display: block; font-size: 0.75rem; color: #6b7280; } .ds-row-value { margin-left: auto; text-align: right; font-variant-numeric: tabular-nums; font-size: 0.875rem; font-weight: 500; color: #14161a; } .ds-row-value small { display: block; font-size: 0.75rem; font-weight: 400; color: #6b7280; }"
+    },
+    {
+      "name": "Advisor Trigger",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Floating action button opening the advisor drawer — the one shadowed in-flow element.",
+      "html": "<button class=\"ds-fab\" aria-label=\"Ask about your portfolio\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\"><path d=\"M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v5A1.5 1.5 0 0 1 12.5 11H8l-3 2.5V11H3.5A1.5 1.5 0 0 1 2 9.5v-5Z\" stroke=\"currentColor\" stroke-width=\"1.3\" stroke-linejoin=\"round\"/></svg><span>Ask about your portfolio</span></button>",
+      "css": ".ds-fab { display: inline-flex; align-items: center; gap: 8px; background: #14161a; color: #ffffff; border: none; border-radius: 9999px; padding: 12px 16px; box-shadow: 0 10px 15px -3px rgba(20,22,26,0.10); transition: transform 0.15s ease; } .ds-fab:hover { transform: translateY(-2px); } .ds-fab:focus-visible { outline: 2px solid #3654d6; outline-offset: 2px; }"
+    },
+    {
+      "name": "Provenance Line",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "The 'source · as of timestamp' pattern required on every provider-sourced value (mirrors backend SourcedValue<T>).",
+      "html": "<p class=\"ds-provenance\">Financial Modeling Prep &middot; as of Jul 29, 6:00 AM EDT</p>",
+      "css": ".ds-provenance { font-size: 0.75rem; color: #6b7280; margin: 0; }"
+    }
+  ],
+  "narrative": {
+    "northStar": null,
+    "overview": "Rundown is the category standard, executed at full commitment: a consumer-fintech portfolio dashboard in the register of Robinhood, Copilot Money, and Wealthfront, deliberately chosen over two invented visual worlds (a newsroom rundown sheet, an airport split-flap board) during the direction pass recorded in PRODUCT.md. There is no named metaphor here by design — the brief was to play the convention straight, not to smuggle a quirk into it. The system reads as calm, trustworthy, and slightly clinical: neutral paper-and-ink surfaces, one restrained accent, confident tabular numerals, and generous card padding, closer to a well-made banking app than to a trading terminal. The one place this system departs hardest from category convention is deliberate, not accidental: gain/loss is never color-coded red or green. This is a compliance-grounded rule, not a taste preference. Rundown is light-mode only for now, chosen from the use-scene stated in the surface brief.",
+    "keyCharacteristics": [
+      "Neutral paper/ink palette with a single blue-indigo accent, used sparingly (links, the advisor's brand touches, one chip tone)",
+      "A second, structurally separate status-color pair (amber for stale, red for error) reserved exclusively for data freshness — never repurposed for gain/loss",
+      "Flat, bordered cards at rest; shadow appears only on floating/overlay elements (the advisor drawer and its trigger)",
+      "Tabular numerals everywhere a number appears in a column or is compared across rows",
+      "Every provider-sourced data point carries a source · as of [timestamp] line, rendered in the same faint, low-emphasis type"
+    ],
+    "rules": [
+      { "name": "The Neutral P&L Rule", "body": "Gain/loss is never rendered in red or green. It is always neutral ink (#14161a for the figure, #5b6068 for the percent) with a small ▲/▼ glyph in ink-faint. This is a compliance boundary, not a stylistic restraint — see components/PnlValue.tsx's own comment and CLAUDE.md hard rule 1.", "section": "colors" },
+      { "name": "The Two-Color-System Rule", "body": "The accent (#3654d6 family) and the status pair (amber/red) never cross roles. Accent means brand/interactive/flagged-for-attention; status means how much to trust this data right now.", "section": "colors" },
+      { "name": "The Tabular Numerals Rule", "body": "Any number a user might scan down a column or compare across rows renders with tabular-nums. No numeric column may use proportional figures.", "section": "typography" },
+      { "name": "The Flat-At-Rest Rule", "body": "Surfaces embedded in page flow never carry a shadow. Shadow only appears on elements that overlay the page (modals, drawers, floating triggers).", "section": "elevation" }
+    ],
+    "dos": [
+      "Do render gain/loss in neutral ink with a ▲/▼ glyph only — never red or green (components/PnlValue.tsx).",
+      "Do apply tabular-nums to every number that appears in a column or is compared row-to-row.",
+      "Do attach a {source} · as of {timestamp} line to any value fetched from a provider, using formatAsOf for timestamped values.",
+      "Do format date-only values (no time-of-day component, e.g. a filing date) with formatDate's explicit timeZone: \"UTC\" — a bare YYYY-MM-DD string parses as UTC midnight, and formatting it in the viewer's local zone can roll it back a day west of UTC. Don't remove the timeZone: \"UTC\" option.",
+      "Do use the paper/surface tonal step (not a border) to distinguish content nested inside a card.",
+      "Do keep shadows reserved for overlay elements (drawer, floating trigger) and flat borders for everything in normal page flow."
+    ],
+    "donts": [
+      "Don't color-code P&L red/green, or otherwise let a visual treatment read as implicit buy/sell guidance — this is a legal boundary (Investment Advisers Act, CLAUDE.md hard rule 1), not a style call.",
+      "Don't reuse the status-color pair (amber/red) for anything other than data freshness or fetch errors. It must never double as a gain/loss or sentiment color.",
+      "Don't ship a data point without a source and as-of timestamp, even in a compact or secondary UI placement.",
+      "Don't introduce a second accent hue. The system's Restrained color strategy means one accent, used sparingly.",
+      "Don't design new screens against dark mode yet; the system is light-mode only by a deliberate use-scene decision, not an oversight."
+    ]
+  }
+}
