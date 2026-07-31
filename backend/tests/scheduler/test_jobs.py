@@ -29,7 +29,6 @@ from app.scheduler.jobs import (
     register_jobs,
     write_daily_snapshot,
 )
-from app.services.snaptrade_service import SnapTradeService
 from tests.fixtures.synthetic_positions import (
     build_fake_snaptrade_client,
     synthetic_account,
@@ -42,21 +41,17 @@ _KEY_METRICS_URL = "https://financialmodelingprep.com/stable/key-metrics-ttm"
 _NEWS_URL = "https://finnhub.io/api/v1/company-news"
 
 
-async def _connected_app_state(
+def _connected_app_state(
     db_session_factory: async_sessionmaker[AsyncSession],
     *,
     positions: list[dict[str, Any]] | None = None,
 ) -> SimpleNamespace:
+    """An `app_state` whose SnapTrade fake has one linked brokerage with holdings."""
     snaptrade_client = build_fake_snaptrade_client(
         accounts=[synthetic_account()],
         balance=synthetic_balance(),
         positions=positions if positions is not None else [synthetic_stock_position()],
     )
-    async with db_session_factory() as session:
-        await SnapTradeService(
-            client=snaptrade_client, cache=CacheRepository(session), session=session
-        ).connect()
-
     return SimpleNamespace(
         session_factory=db_session_factory,
         snaptrade_client=snaptrade_client,
@@ -89,7 +84,7 @@ async def test_refresh_fundamentals_writes_one_cache_entry_per_symbol(
     respx.get(_KEY_METRICS_URL).mock(
         return_value=httpx.Response(200, json=[{"symbol": "AAPL", "revenuePerShareTTM": 5}])
     )
-    app_state = await _connected_app_state(db_session_factory)
+    app_state = _connected_app_state(db_session_factory)
 
     await refresh_fundamentals(app_state)
 
@@ -110,7 +105,7 @@ async def test_refresh_fundamentals_one_symbol_failure_does_not_abort_batch(
     respx.get(_KEY_METRICS_URL, params={"symbol": "MSFT"}).mock(
         return_value=httpx.Response(200, json=[{"symbol": "MSFT", "revenuePerShareTTM": 8}])
     )
-    app_state = await _connected_app_state(
+    app_state = _connected_app_state(
         db_session_factory,
         positions=[
             synthetic_stock_position(symbol="AAPL"),
@@ -131,7 +126,7 @@ async def test_refresh_news_writes_one_cache_entry_per_symbol(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     respx.get(_NEWS_URL).mock(return_value=httpx.Response(200, json=[]))
-    app_state = await _connected_app_state(db_session_factory)
+    app_state = _connected_app_state(db_session_factory)
 
     await refresh_news(app_state)
 
@@ -143,7 +138,7 @@ async def test_refresh_news_writes_one_cache_entry_per_symbol(
 async def test_write_daily_snapshot_writes_one_row_per_holding(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    app_state = await _connected_app_state(db_session_factory)
+    app_state = _connected_app_state(db_session_factory)
 
     await write_daily_snapshot(app_state)
 
@@ -154,9 +149,10 @@ async def test_write_daily_snapshot_writes_one_row_per_holding(
     assert rows[0].allocation_pct == 100
 
 
-async def test_write_daily_snapshot_skips_when_not_connected(
+async def test_write_daily_snapshot_skips_when_no_brokerage_linked(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """No linked brokerage yet -> zero holdings -> the run is skipped, not an empty write."""
     app_state = SimpleNamespace(
         session_factory=db_session_factory,
         snaptrade_client=build_fake_snaptrade_client(),

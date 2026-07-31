@@ -1,8 +1,8 @@
 """`POST /portfolio/connect`, `GET /portfolio/accounts`, `GET /portfolio/positions`.
 
-SnapTrade is wired up read-only only -- see
+SnapTrade is wired up read-only only, using Personal-tier auth -- see
 `app/services/snaptrade_service.py`'s module docstring for the exact
-guarantee this provides and its one open caveat.
+guarantee this provides and its open caveats.
 """
 
 from typing import Annotated
@@ -29,7 +29,7 @@ async def connect(
 async def get_accounts(
     snaptrade_service: Annotated[SnapTradeService, Depends(get_snaptrade_service)],
 ) -> SourcedValue[list[AccountSummary]]:
-    """409s if no SnapTrade connection exists yet (call `/portfolio/connect` first)."""
+    """An empty list is a valid response: no brokerage linked yet (see `/portfolio/connect`)."""
     return await snaptrade_service.list_accounts()
 
 
@@ -37,5 +37,5 @@ async def get_accounts(
 async def get_positions(
     snaptrade_service: Annotated[SnapTradeService, Depends(get_snaptrade_service)],
 ) -> SourcedValue[list[PositionView]]:
-    """409s if no SnapTrade connection exists yet (call `/portfolio/connect` first)."""
+    """An empty list is a valid response: no brokerage linked yet (see `/portfolio/connect`)."""
     return await snaptrade_service.list_positions()

@@ -70,11 +70,18 @@ def test_settings_raises_validation_error_when_required_var_missing(
     This must surface as a `pydantic.ValidationError` raised from
     `Settings()` itself -- not a later `NoneType` failure deep inside a
     service that tries to use a silently-absent value.
+
+    Constructed with `_env_file=None` to isolate from a real `backend/.env`
+    that may exist on the machine running this suite (every contributor is
+    instructed to create one in Setup): `Settings`'s `model_config` points
+    at that file by path, and pydantic-settings falls back to it for any
+    field `monkeypatch.delenv` removes from `os.environ`, which would mask
+    exactly the failure this test exists to catch.
     """
     monkeypatch.delenv(missing_env_var, raising=False)
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings()
+        Settings(_env_file=None)
 
     assert missing_env_var.lower() in str(exc_info.value).lower()
 

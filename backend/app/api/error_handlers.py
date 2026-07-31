@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from app.services.errors import (
     AdvisorUnavailableError,
     InsufficientContextError,
-    NotConnectedError,
     ProviderFetchError,
     ProviderNotFoundError,
     ProviderUnavailableError,
@@ -28,10 +27,6 @@ async def _handle_provider_not_found(_request: Request, exc: Exception) -> JSONR
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
 
 
-async def _handle_not_connected(_request: Request, exc: Exception) -> JSONResponse:
-    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
-
-
 async def _handle_insufficient_context(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content={"detail": str(exc)}
@@ -42,7 +37,6 @@ def register_error_handlers(app: FastAPI) -> None:
     """Attach every service-layer exception -> HTTP-response mapping to `app`."""
     app.add_exception_handler(ProviderUnavailableError, _handle_provider_unavailable)
     app.add_exception_handler(ProviderNotFoundError, _handle_provider_not_found)
-    app.add_exception_handler(NotConnectedError, _handle_not_connected)
     # `ProviderFetchError` is normally caught internally by
     # `cache_through.fetch_with_cache`, which translates it into a
     # `ProviderUnavailableError` (handled above) or a stale-cache

@@ -12,6 +12,7 @@ from anthropic import AsyncAnthropic
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from snaptrade_client.auth import SnapTradeAuth
 from snaptrade_client.client import SnapTrade
 
 from app.api.dependencies import require_api_token
@@ -72,9 +73,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # No `.aclose()` needed at teardown, unlike the httpx clients above:
     # the SDK's async methods open a fresh aiohttp session per call rather
     # than holding one open (see snaptrade_service.py's docstring).
+    #
+    # `auth=` (not bare `client_id=`/`consumer_key=` kwargs) is required:
+    # `Configuration.auth_mode` only gets set from the `auth` object, and
+    # the SDK's request-signing hook (`request_after_hook.py`) silently
+    # skips computing the request signature entirely when `auth_mode` is
+    # `None` -- passing the keys directly still lets the client construct,
+    # but every request 403s with "Authentication credentials were not
+    # provided" since nothing ever gets signed.
+    #
+    # `personal_api_key` (not `commercial_api_key`): CLAUDE.md's free-tier
+    # table specifies "Personal tier" for SnapTrade, and this matters
+    # beyond which auth mode signs the request -- SnapTrade rejects the
+    # partner/commercial-tier user-registration endpoint outright for
+    # Personal keys (verified live: 400 "registerUser is not available for
+    # personal keys"). See `snaptrade_service.py`'s module docstring for
+    # the full auth-mode story, including why this app never calls that
+    # endpoint at all.
     app.state.snaptrade_client = SnapTrade(
-        client_id=settings.snaptrade_client_id.get_secret_value(),
-        consumer_key=settings.snaptrade_consumer_key.get_secret_value(),
+        auth=SnapTradeAuth.personal_api_key(
+            consumer_key=settings.snaptrade_consumer_key.get_secret_value(),
+            client_id=settings.snaptrade_client_id.get_secret_value(),
+        ),
     )
 
     app.state.claude_client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())

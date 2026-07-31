@@ -6,14 +6,12 @@ suite never touches the live network or the real SDK's `aiohttp`-based
 transport.
 """
 
-import asyncio
-
 import pytest
 from snaptrade_client.exceptions_base import OpenApiException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.cache.cache_repository import CacheRepository
-from app.services.errors import NotConnectedError, ProviderUnavailableError
+from app.services.errors import ProviderFetchError, ProviderUnavailableError
 from app.services.snaptrade_service import SnapTradeService
 from tests.fixtures.synthetic_positions import (
     build_fake_snaptrade_client,
@@ -25,49 +23,49 @@ from tests.fixtures.synthetic_positions import (
 )
 
 
-async def test_connect_registers_once_then_reuses_persisted_secret(
+async def test_connect_returns_portal_url_without_registering_a_user(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """No local registration step: Personal-tier auth calls `login` directly.
+
+    Unlike the partner/commercial flow, there's no `registerUser` call to
+    dedupe or persist a secret from -- see the module docstring.
+    """
     client = build_fake_snaptrade_client()
 
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
         first_url = await service.connect()
         second_url = await service.connect()
 
     assert first_url == synthetic_login_response()["redirectURI"]
     assert second_url == synthetic_login_response()["redirectURI"]
-    assert client.authentication.aregister_snap_trade_user.call_count == 1
     assert client.authentication.alogin_snap_trade_user.call_count == 2
 
 
-async def test_concurrent_connect_calls_register_exactly_once(
+async def test_connect_when_snaptrade_login_fails_raises_provider_fetch_error(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    client = build_fake_snaptrade_client()
+    client = build_fake_snaptrade_client(login_error=OpenApiException("boom"))
 
-    async def _connect() -> str:
-        async with db_session_factory() as session:
-            service = SnapTradeService(
-                client=client, cache=CacheRepository(session), session=session
-            )
-            return await service.connect()
-
-    urls = await asyncio.gather(_connect(), _connect())
-
-    assert client.authentication.aregister_snap_trade_user.call_count == 1
-    assert all(url == synthetic_login_response()["redirectURI"] for url in urls)
+    async with db_session_factory() as session:
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
+        with pytest.raises(ProviderFetchError):
+            await service.connect()
 
 
-async def test_list_positions_without_connection_raises_not_connected(
+async def test_list_positions_with_no_linked_brokerage_returns_empty_list(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """An empty accounts list (nothing linked yet) is a valid, successful response."""
     client = build_fake_snaptrade_client()
 
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
-        with pytest.raises(NotConnectedError):
-            await service.list_positions()
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
+        result = await service.list_positions()
+
+    assert result.source == "SnapTrade"
+    assert result.value == []
 
 
 async def test_list_positions_maps_holdings_and_filters_non_equity_kinds(
@@ -80,8 +78,7 @@ async def test_list_positions_maps_holdings_and_filters_non_equity_kinds(
     )
 
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
-        await service.connect()
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
         result = await service.list_positions()
 
     assert result.source == "SnapTrade"
@@ -101,8 +98,7 @@ async def test_list_accounts_includes_balance(
     )
 
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
-        await service.connect()
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
         result = await service.list_accounts()
 
     assert len(result.value) == 1
@@ -122,11 +118,10 @@ async def test_positions_cache_hit_within_ttl_does_not_trigger_second_sdk_call(
     )
 
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
-        await service.connect()
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
         await service.list_positions()
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
         await service.list_positions()
 
     assert client.account_information.aget_all_account_positions.call_count == 1
@@ -142,8 +137,7 @@ async def test_provider_error_with_no_cache_raises_provider_unavailable(
     )
 
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
-        await service.connect()
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
         with pytest.raises(ProviderUnavailableError):
             await service.list_positions()
 
@@ -158,8 +152,7 @@ async def test_provider_error_with_existing_cache_returns_stale_labeled_value(
     )
 
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
-        await service.connect()
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
         await service.list_positions()
 
         # Force the positions cache entry to be treated as expired.
@@ -170,7 +163,7 @@ async def test_provider_error_with_existing_cache_returns_stale_labeled_value(
     client.account_information.aget_all_account_positions.side_effect = OpenApiException("down")
 
     async with db_session_factory() as session:
-        service = SnapTradeService(client=client, cache=CacheRepository(session), session=session)
+        service = SnapTradeService(client=client, cache=CacheRepository(session))
         result = await service.list_positions()
 
     assert result.is_stale is True

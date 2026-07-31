@@ -12,13 +12,6 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 
-def synthetic_register_response(
-    user_id: str = "rundown-local-user",
-    user_secret: str = "synthetic-secret",  # noqa: S107
-) -> dict[str, str]:
-    return {"userId": user_id, "userSecret": user_secret}
-
-
 def synthetic_login_response(
     redirect_uri: str = "https://connect.snaptrade.com/portal/synthetic",
 ) -> dict[str, str]:
@@ -33,8 +26,9 @@ def synthetic_account(account_id: str = "synthetic-account-1") -> dict[str, str]
     }
 
 
-def synthetic_balance() -> dict[str, Any]:
-    return {"cash": 1000.0, "buying_power": 2000.0, "currency": "USD"}
+def synthetic_balance() -> list[dict[str, Any]]:
+    """`get_user_account_balance` returns a *list* of per-currency entries (verified live)."""
+    return [{"cash": 1000.0, "buying_power": 2000.0, "currency": {"code": "USD"}}]
 
 
 def synthetic_stock_position(
@@ -61,9 +55,9 @@ def synthetic_option_position() -> dict[str, Any]:
 def build_fake_snaptrade_client(
     *,
     accounts: list[dict[str, Any]] | None = None,
-    balance: dict[str, Any] | None = None,
+    balance: list[dict[str, Any]] | None = None,
     positions: list[dict[str, Any]] | None = None,
-    register_error: Exception | None = None,
+    login_error: Exception | None = None,
     positions_error: Exception | None = None,
 ) -> SimpleNamespace:
     """A `SimpleNamespace` shaped like the real `SnapTrade` SDK client.
@@ -74,27 +68,29 @@ def build_fake_snaptrade_client(
     SDK's `aiohttp`-based transport or a live SnapTrade account. Shared by
     both the service-level and route-level test suites so this shape is
     defined once.
+
+    No `aregister_snap_trade_user` mock: Personal-tier auth never calls
+    it (see `SnapTradeService`'s module docstring) -- SnapTrade rejects
+    that endpoint outright for Personal keys.
     """
-    register_mock = AsyncMock(
-        side_effect=register_error,
-        return_value=None
-        if register_error
-        else SimpleNamespace(body=synthetic_register_response()),
+    login_mock = AsyncMock(
+        side_effect=login_error,
+        return_value=None if login_error else SimpleNamespace(body=synthetic_login_response()),
     )
-    login_mock = AsyncMock(return_value=SimpleNamespace(body=synthetic_login_response()))
     accounts_mock = AsyncMock(
         return_value=SimpleNamespace(body=accounts if accounts is not None else [])
     )
     balance_mock = AsyncMock(
-        return_value=SimpleNamespace(body=balance if balance is not None else {})
+        return_value=SimpleNamespace(body=balance if balance is not None else [])
     )
     positions_mock = AsyncMock(
         side_effect=positions_error,
-        return_value=None if positions_error else SimpleNamespace(body=positions or []),
+        return_value=None
+        if positions_error
+        else SimpleNamespace(body={"results": positions or [], "data_freshness": {}}),
     )
     return SimpleNamespace(
         authentication=SimpleNamespace(
-            aregister_snap_trade_user=register_mock,
             alogin_snap_trade_user=login_mock,
         ),
         account_information=SimpleNamespace(

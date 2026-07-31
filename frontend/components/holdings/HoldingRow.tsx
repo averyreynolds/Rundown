@@ -111,7 +111,12 @@ export function HoldingRow({ holding }: { holding: HoldingDetail }) {
             )}
 
             <button
-              onClick={() => open(position.symbol)}
+              onClick={() =>
+                open(
+                  position.symbol,
+                  filing ? { symbol: position.symbol, accessionNumber: filing.value.accessionNumber } : undefined,
+                )
+              }
               className="text-sm font-medium text-accent-ink hover:underline"
             >
               Ask about this position →

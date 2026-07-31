@@ -128,16 +128,14 @@ def get_snaptrade_client(request: Request) -> Any:  # noqa: ANN401
 def get_snaptrade_service(
     client: Annotated[Any, Depends(get_snaptrade_client)],  # noqa: ANN401
     cache: Annotated[CacheRepository, Depends(get_cache_repository)],
-    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> SnapTradeService:
-    """Build a `SnapTradeService` from the shared client, cache, and DB session.
+    """Build a `SnapTradeService` from the shared client and a request-scoped cache.
 
-    Takes `session` directly (unlike the other `get_*_service` factories)
-    because `snaptrade_connection` is a durable credential row, not a
-    cache entry -- `SnapTradeService` reads/writes it itself rather than
-    routing it through `CacheRepository`, which owns `cache_entries` only.
+    No DB session needed (unlike a superficially similar earlier design):
+    Personal-tier SnapTrade auth has no local user-registration row to
+    persist -- see `SnapTradeService`'s module docstring.
     """
-    return SnapTradeService(client=client, cache=cache, session=session)
+    return SnapTradeService(client=client, cache=cache)
 
 
 def get_claude_client(request: Request) -> AsyncAnthropic:

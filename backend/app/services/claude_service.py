@@ -45,7 +45,6 @@ from app.services.edgar_service import EdgarService
 from app.services.errors import (
     AdvisorUnavailableError,
     InsufficientContextError,
-    NotConnectedError,
     ProviderNotFoundError,
     ProviderUnavailableError,
 )
@@ -270,7 +269,7 @@ class ClaudeService:
         """
         try:
             result = await self._snaptrade_service.list_positions()
-        except (NotConnectedError, ProviderUnavailableError):
+        except ProviderUnavailableError:
             return None
 
         views = result.value

@@ -9,12 +9,13 @@ provider clients) straight off `app.state`, per the plan's Key Technical
 Decisions.
 
 Every job iterates the user's *current* holdings first (via
-`SnapTradeService.list_positions`) and skips its run entirely if no
-SnapTrade connection exists yet, rather than iterating zero holdings or
-writing a meaningless empty snapshot. One symbol's failure during a batch
-never aborts the rest of the batch -- CLAUDE.md's rate-limit discipline
-rule and R12's minimal snapshot both depend on these jobs actually
-running reliably, not silently dying on the first bad symbol.
+`SnapTradeService.list_positions`) and skips its run entirely if there
+are none yet (no brokerage linked, or SnapTrade itself unavailable),
+rather than writing a meaningless empty snapshot. One symbol's failure
+during a batch never aborts the rest of the batch -- CLAUDE.md's
+rate-limit discipline rule and R12's minimal snapshot both depend on
+these jobs actually running reliably, not silently dying on the first
+bad symbol.
 """
 
 import datetime as dt
@@ -26,7 +27,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.cache.cache_repository import CacheRepository
 from app.db.models import PortfolioSnapshot
-from app.services.errors import NotConnectedError, ProviderNotFoundError, ProviderUnavailableError
+from app.services.errors import ProviderNotFoundError, ProviderUnavailableError
 from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
 from app.services.snaptrade_service import SnapTradeService
@@ -52,21 +53,20 @@ async def _current_holdings(app_state: Any) -> list[Any] | None:  # noqa: ANN401
 
     Shared by all three jobs: each needs the same "what do we currently
     hold" starting point, and each has the same two skip conditions (no
-    connection yet; SnapTrade itself unavailable) rather than partially
-    running against stale/empty data.
+    brokerage linked yet, i.e. an empty list; SnapTrade itself
+    unavailable) rather than partially running against stale/empty data.
     """
     async with app_state.session_factory() as session:
         snaptrade = SnapTradeService(
             client=app_state.snaptrade_client,
             cache=CacheRepository(session),
-            session=session,
         )
         try:
             positions = await snaptrade.list_positions()
-        except NotConnectedError:
-            return None
         except ProviderUnavailableError as exc:
             logger.warning("Skipping scheduled run: SnapTrade unavailable: %s", exc)
+            return None
+        if not positions.value:
             return None
         return list(positions.value)
 

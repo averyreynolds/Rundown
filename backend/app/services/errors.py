@@ -20,9 +20,6 @@ responses, never raw exceptions or stack traces):
   failure -- never eligible for stale-cache fallback, and services raise
   it directly rather than routing it through `fetch_with_cache`. Maps to
   a 404 response.
-- `NotConnectedError`: no SnapTrade connection exists yet for this local
-  user. Distinguishes "nothing to show yet, prompt the user to connect"
-  from a provider outage -- maps to a 409 response.
 - `InsufficientContextError`: the advisor (U8) has no data to ground an
   answer in for this request (no symbols, no connected portfolio, no
   filing text). Maps to a 422 response -- the request is well-formed, it
@@ -54,13 +51,6 @@ class ProviderNotFoundError(Exception):
         super().__init__(f"{provider} has no data for '{identifier}'.")
         self.provider = provider
         self.identifier = identifier
-
-
-class NotConnectedError(Exception):
-    """No SnapTrade connection exists yet for this local user."""
-
-    def __init__(self) -> None:
-        super().__init__("No SnapTrade connection exists yet. Call POST /portfolio/connect first.")
 
 
 class InsufficientContextError(Exception):

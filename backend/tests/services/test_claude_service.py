@@ -67,13 +67,11 @@ async def _build_claude_service(
     """
     cache = CacheRepository(session)
     snaptrade_client = build_fake_snaptrade_client(
-        accounts=[synthetic_account()],
+        accounts=[synthetic_account()] if connected else [],
         balance=synthetic_balance(),
         positions=positions if positions is not None else [synthetic_stock_position()],
     )
-    snaptrade_service = SnapTradeService(client=snaptrade_client, cache=cache, session=session)
-    if connected:
-        await snaptrade_service.connect()
+    snaptrade_service = SnapTradeService(client=snaptrade_client, cache=cache)
 
     return ClaudeService(
         client=anthropic_client,  # type: ignore[arg-type]
