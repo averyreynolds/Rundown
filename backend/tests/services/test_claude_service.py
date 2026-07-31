@@ -22,7 +22,6 @@ from app.services.claude_service import (
     _MAX_FILING_CHARS,
     _SAFE_FALLBACK_MESSAGE,
     ClaudeService,
-    _prepare_filing_text,
     contains_directive_language,
 )
 from app.services.edgar_service import EdgarService
@@ -34,6 +33,7 @@ from tests.fixtures.synthetic_advisor import fake_anthropic_client as _fake_anth
 from tests.fixtures.synthetic_filing import (
     SYNTHETIC_FILING_TEXT,
     SYNTHETIC_TICKER_MAP,
+    synthetic_10k_html,
     synthetic_submissions,
 )
 from tests.fixtures.synthetic_news import synthetic_news_items
@@ -177,10 +177,11 @@ async def test_filing_summarization_returns_citations_from_the_source_filing(
     document_blocks = [block for block in sent_content if block.get("type") == "document"]
     assert len(document_blocks) == 1
     assert document_blocks[0]["citations"] == {"enabled": True}
-    # The advisor strips filing HTML down to plain text before sending it
-    # to Claude (see `_prepare_filing_text`) -- the raw markup from
-    # `SYNTHETIC_FILING_TEXT` should not appear verbatim in the request.
-    assert document_blocks[0]["source"]["data"] == "Synthetic filing text for testing only."
+    # The advisor sends extracted plain text, never raw markup -- a filing
+    # with no recognizable Item headings still comes through as text
+    # rather than being dropped (`mode="unsegmented"`).
+    assert "<html>" not in document_blocks[0]["source"]["data"]
+    assert "Synthetic filing text for testing only." in document_blocks[0]["source"]["data"]
 
 
 @respx.mock
@@ -201,50 +202,31 @@ async def test_filing_summarization_for_unknown_symbol_raises_insufficient_conte
             )
 
 
-# --- Filing text is stripped/capped before it reaches Claude ---------------
-# Regression coverage for a real bug: a large 10-K's raw, unstripped
-# inline-XBRL HTML pushed a single advisor request past the model's
-# 1M-token prompt limit (400 invalid_request_error). See
-# `_prepare_filing_text`'s docstring.
+# --- Only portfolio-relevant filing sections reach Claude ------------------
+# Regression coverage for two real bugs. First: a large 10-K's raw,
+# unstripped inline-XBRL HTML pushed a single advisor request past the
+# model's 1M-token prompt limit (400 invalid_request_error). Second, and
+# subtler: the head-truncation that fixed it spent the whole character
+# budget on the cover page and table of contents, cutting off before
+# MD&A -- so the advisor stayed under the limit while being grounded in
+# the least relevant part of the filing. See `app.domain.filing_sections`.
 
 
-def test_prepare_filing_text_strips_html_markup() -> None:
-    text, was_truncated = _prepare_filing_text(
-        "<html><body><p>Revenue grew 10%.</p><script>ignoreMe();</script></body></html>"
-    )
-    assert text == "Revenue grew 10%."
-    assert was_truncated is False
-
-
-def test_prepare_filing_text_passes_through_plain_text_unchanged() -> None:
-    text, was_truncated = _prepare_filing_text("Revenue grew 10% year over year.")
-    assert text == "Revenue grew 10% year over year."
-    assert was_truncated is False
-
-
-def test_prepare_filing_text_truncates_oversized_filings() -> None:
-    text, was_truncated = _prepare_filing_text("x" * (_MAX_FILING_CHARS + 1))
-    assert len(text) == _MAX_FILING_CHARS
-    assert was_truncated is True
-
-
-@respx.mock
-async def test_oversized_filing_document_is_truncated_and_labeled(
+async def _document_block_for_filing(
     db_session_factory: async_sessionmaker[AsyncSession],
-) -> None:
+    filing_html: str,
+    anthropic_client: SimpleNamespace,
+) -> tuple[dict[str, Any], str]:
+    """Run one filing through `chat` and return `(document_block, prompt_text)`."""
     respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
     respx.get(_SUBMISSIONS_URL).mock(return_value=httpx.Response(200, json=synthetic_submissions()))
-    oversized_filing = (
-        "<html><body>" + ("Revenue grew. " * (_MAX_FILING_CHARS // 10)) + "</body></html>"
-    )
-    respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=oversized_filing))
-    anthropic_client = _fake_anthropic_client("The filing shows revenue growth.")
+    respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=filing_html))
 
     async with db_session_factory() as session:
         service = await _build_claude_service(
             session, anthropic_client=anthropic_client, connected=False
         )
-        response = await service.chat(
+        await service.chat(
             "Summarize this filing.",
             ContextRefs(
                 filing_ref=FilingRef(symbol="SYNT", accession_number="0000320193-24-000123")
@@ -252,10 +234,59 @@ async def test_oversized_filing_document_is_truncated_and_labeled(
         )
 
     sent_content = anthropic_client.messages.create.await_args.kwargs["messages"][0]["content"]
-    document_blocks = [block for block in sent_content if block.get("type") == "document"]
-    assert len(document_blocks[0]["source"]["data"]) == _MAX_FILING_CHARS
-    assert "[truncated excerpt]" in document_blocks[0]["title"]
-    assert response.answer == "The filing shows revenue growth."
+    document_block = next(block for block in sent_content if block.get("type") == "document")
+    return document_block, sent_content[-1]["text"]
+
+
+@respx.mock
+async def test_only_portfolio_relevant_sections_are_sent(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    document_block, _ = await _document_block_for_filing(
+        db_session_factory, synthetic_10k_html(), _fake_anthropic_client()
+    )
+    data = document_block["source"]["data"]
+
+    assert "Revenue increased to $1,234 million" in data  # Item 7, MD&A
+    assert "single fabricated supplier" in data  # Item 1A, Risk Factors
+    assert "long and static" not in data  # Item 1, excluded
+    assert "audited synthetic financial" not in data  # Item 8, excluded
+    assert "XBRL-ONLY-FACT-DO-NOT-SURFACE" not in data  # hidden iXBRL fact
+    assert "[section excerpt]" in document_block["title"]
+
+
+@respx.mock
+async def test_oversized_filing_keeps_mdna_and_stays_within_budget(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    oversized = synthetic_10k_html(mdna_body="Revenue grew. " * (_MAX_FILING_CHARS // 10))
+    document_block, _ = await _document_block_for_filing(
+        db_session_factory, oversized, _fake_anthropic_client("The filing shows revenue growth.")
+    )
+    data = document_block["source"]["data"]
+
+    assert len(data) <= _MAX_FILING_CHARS
+    assert "[truncated excerpt]" in document_block["title"]
+    # The whole point: MD&A survives an over-budget filing.
+    assert "Management's Discussion and Analysis" in data
+    assert "Revenue grew." in data
+
+
+@respx.mock
+async def test_prompt_tells_the_model_which_sections_it_did_not_get(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Otherwise hard rule 2's "say so when the context doesn't cover it"
+    makes the model report that the *filing* is silent on a topic when in
+    fact only the *excerpt* is -- an authoritative-sounding wrong answer."""
+    _, prompt_text = await _document_block_for_filing(
+        db_session_factory, synthetic_10k_html(), _fake_anthropic_client()
+    )
+
+    assert "contains these sections only" in prompt_text
+    assert "Item 7." in prompt_text
+    assert "Item 1. Business" in prompt_text
+    assert "outside this excerpt" in prompt_text
 
 
 # --- The no-directive-advice boundary: the core legal requirement ----------

@@ -14,12 +14,15 @@ filed (only the ticker->CIK mapping can drift, and even that rarely).
 """
 
 import datetime as dt
+from dataclasses import dataclass
 from typing import Any
 
+import anyio.to_thread
 import httpx
 
 from app.cache.cache_repository import CacheRepository
 from app.cache.ttl_policy import filings_ttl_seconds
+from app.domain.filing_sections import SegmentedFiling, segment_filing
 from app.schemas.common import SourcedValue
 from app.schemas.filings import FilingMetadata, FilingText
 from app.services.cache_through import CachedResult, fetch_with_cache
@@ -40,6 +43,15 @@ _MAX_RECENT_FILINGS = 20
 
 def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class _LocatedFiling:
+    """One filing pinned down to a fetchable archive URL."""
+
+    form: str
+    archive_url: str
+    submissions: CachedResult
 
 
 class EdgarService:
@@ -86,6 +98,66 @@ class EdgarService:
                 `accession_number` doesn't match any of `symbol`'s filings.
             ProviderUnavailableError: EDGAR is failing and nothing is cached.
         """
+        located = await self._locate_filing(symbol, accession_number)
+
+        text_result = await fetch_with_cache(
+            cache=self._cache,
+            provider=_PROVIDER,
+            cache_key=f"text:{accession_number}",
+            ttl_seconds=filings_ttl_seconds(),
+            fetch_live=lambda: self._fetch_text(located.archive_url),
+            clock=_utcnow,
+        )
+
+        return SourcedValue(
+            value=FilingText(
+                accession_number=accession_number, form=located.form, text=text_result.payload
+            ),
+            source=_SOURCE_NAME,
+            as_of=text_result.as_of,
+            is_stale=text_result.is_stale,
+        )
+
+    async def get_filing_sections(
+        self, symbol: str, accession_number: str
+    ) -> SourcedValue[SegmentedFiling]:
+        """Return one filing's portfolio-relevant Item sections, parsed and cached.
+
+        Cached as the *parsed* result, separately from `text:` -- parsing
+        a large inline-XBRL 10-K is seconds of CPU, and the advisor would
+        otherwise pay it on every question about the same filing. Filing
+        text never changes once published, so the parse is cacheable for
+        exactly as long as the text is.
+
+        The parse itself runs in a worker thread: BeautifulSoup is
+        synchronous CPU work, and doing it inline would block the event
+        loop (and therefore every other in-flight request) for its whole
+        duration.
+
+        Raises:
+            ProviderNotFoundError: `symbol` isn't known, or
+                `accession_number` doesn't match any of `symbol`'s filings.
+            ProviderUnavailableError: EDGAR is failing and nothing is cached.
+        """
+        located = await self._locate_filing(symbol, accession_number)
+
+        result = await fetch_with_cache(
+            cache=self._cache,
+            provider=_PROVIDER,
+            cache_key=f"sections:{accession_number}",
+            ttl_seconds=filings_ttl_seconds(),
+            fetch_live=lambda: self._fetch_and_segment(located.archive_url, located.form),
+            clock=_utcnow,
+        )
+
+        return SourcedValue(
+            value=SegmentedFiling.from_cacheable(result.payload),
+            source=_SOURCE_NAME,
+            as_of=result.as_of,
+            is_stale=result.is_stale,
+        )
+
+    async def _locate_filing(self, symbol: str, accession_number: str) -> _LocatedFiling:
         cik = await self._resolve_cik(symbol)
         submissions = await self._fetch_submissions(cik)
         recent = submissions.payload["filings"]["recent"]
@@ -95,30 +167,20 @@ class EdgarService:
         except ValueError as exc:
             raise ProviderNotFoundError(_PROVIDER, accession_number) from exc
 
-        form = recent["form"][index]
         primary_document = recent["primaryDocument"][index]
-        archive_url = (
-            f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
-            f"{accession_number.replace('-', '')}/{primary_document}"
-        )
-
-        text_result = await fetch_with_cache(
-            cache=self._cache,
-            provider=_PROVIDER,
-            cache_key=f"text:{accession_number}",
-            ttl_seconds=filings_ttl_seconds(),
-            fetch_live=lambda: self._fetch_text(archive_url),
-            clock=_utcnow,
-        )
-
-        return SourcedValue(
-            value=FilingText(
-                accession_number=accession_number, form=form, text=text_result.payload
+        return _LocatedFiling(
+            form=recent["form"][index],
+            archive_url=(
+                f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+                f"{accession_number.replace('-', '')}/{primary_document}"
             ),
-            source=_SOURCE_NAME,
-            as_of=text_result.as_of,
-            is_stale=text_result.is_stale,
+            submissions=submissions,
         )
+
+    async def _fetch_and_segment(self, archive_url: str, form: str) -> dict[str, Any]:
+        raw = await self._fetch_text(archive_url)
+        segmented = await anyio.to_thread.run_sync(segment_filing, raw, form)
+        return segmented.to_cacheable()
 
     async def _resolve_cik(self, symbol: str) -> str:
         # Deliberately doesn't propagate this fetch's own `is_stale` into

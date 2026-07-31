@@ -33,7 +33,6 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from html.parser import HTMLParser
 from typing import Any
 
 from anthropic import APIError, AsyncAnthropic
@@ -41,6 +40,7 @@ from anthropic.types import DocumentBlockParam, TextBlockParam
 
 from app.domain.allocation import Allocation
 from app.domain.concentration import flag_concentrated
+from app.domain.filing_sections import build_filing_document
 from app.schemas.advisor import ChatResponse, Citation, ContextRefs
 from app.services.edgar_service import EdgarService
 from app.services.errors import (
@@ -73,7 +73,13 @@ _MAX_TOKENS = 1024
 # pushed a single large 10-K's document block past the model's 1M-token
 # prompt limit (the fetched EDGAR text itself is left untouched --
 # `/filings/{symbol}/{accession}` still returns the raw text/HTML it
-# always has -- this stripping is specific to what the advisor sends).
+# always has -- this budget applies only to what the advisor sends).
+#
+# `app.domain.filing_sections` now spends this budget on the sections
+# that bear on a position (MD&A, risk factors, market risk, legal,
+# dividends/buybacks) in priority order. The previous head-truncation
+# spent it on whatever came first in the document, which on a large 10-K
+# meant the cover page and table of contents, cutting off before MD&A.
 _MAX_FILING_CHARS = 300_000
 
 # CLAUDE.md's four required elements, near-verbatim: (1) forbid directive
@@ -161,49 +167,13 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
 
 
-class _HtmlTextExtractor(HTMLParser):
-    """Pulls visible text out of filing HTML, dropping `<script>`/`<style>` bodies."""
+@dataclass(frozen=True, slots=True)
+class _FilingAttachment:
+    """A filing excerpt prepared for the request, with its scope described."""
 
-    _SKIPPED_TAGS = frozenset({"script", "style"})
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._parts: list[str] = []
-        self._skip_depth = 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in self._SKIPPED_TAGS:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self._SKIPPED_TAGS and self._skip_depth > 0:
-            self._skip_depth -= 1
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth == 0:
-            self._parts.append(data)
-
-    def get_text(self) -> str:
-        return "".join(self._parts)
-
-
-def _prepare_filing_text(raw_text: str) -> tuple[str, bool]:
-    """Strip HTML markup and cap length so a filing document can't blow the prompt budget.
-
-    Returns `(text, was_truncated)`.
-    """
-    if "<" in raw_text and ">" in raw_text:
-        extractor = _HtmlTextExtractor()
-        extractor.feed(raw_text)
-        text = extractor.get_text()
-        text = re.sub(r"[ \t]+", " ", text)
-        text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
-    else:
-        text = raw_text
-
-    if len(text) <= _MAX_FILING_CHARS:
-        return text, False
-    return text[:_MAX_FILING_CHARS], True
+    document: DocumentBlockParam
+    source_label: str
+    provenance_note: str
 
 
 class ClaudeService:
@@ -243,7 +213,7 @@ class ClaudeService:
             AdvisorUnavailableError: the Claude API call itself failed or
                 timed out.
         """
-        document_block, filing_source_label = await self._build_filing_document(context_refs)
+        attachment = await self._build_filing_attachment(context_refs)
 
         context_items: list[ContextItem] = []
         portfolio_item = await self._build_portfolio_context(context_refs.symbols or None)
@@ -255,13 +225,13 @@ class ClaudeService:
             if news_item is not None:
                 context_items.append(news_item)
 
-        if not context_items and document_block is None:
+        if not context_items and attachment is None:
             raise InsufficientContextError(
                 "No context is available for this question -- connect a brokerage "
                 "account, specify symbols, or reference a specific filing."
             )
 
-        user_content = _build_user_content(context_items, document_block, question)
+        user_content = _build_user_content(context_items, attachment, question)
 
         try:
             response = await self._client.messages.create(
@@ -273,7 +243,9 @@ class ClaudeService:
         except APIError as exc:
             raise AdvisorUnavailableError(exc) from exc
 
-        answer, citations = _extract_answer_and_citations(response, filing_source_label)
+        answer, citations = _extract_answer_and_citations(
+            response, attachment.source_label if attachment is not None else None
+        )
 
         if contains_directive_language(answer):
             logger.warning(
@@ -283,14 +255,21 @@ class ClaudeService:
 
         return ChatResponse(answer=answer, citations=citations)
 
-    async def _build_filing_document(
-        self, context_refs: ContextRefs
-    ) -> tuple[DocumentBlockParam | None, str | None]:
+    async def _build_filing_attachment(self, context_refs: ContextRefs) -> _FilingAttachment | None:
+        """Attach the portfolio-relevant sections of the referenced filing.
+
+        The document block carries only the extracted sections, verbatim,
+        so the Citations API's `cited_text` still maps to real filing
+        prose. What was left out travels alongside it as
+        `provenance_note` -- without that, hard rule 2's "say so when the
+        context doesn't cover it" makes the model report that the
+        *filing* is silent on a topic when only the *excerpt* is.
+        """
         if context_refs.filing_ref is None:
-            return None, None
+            return None
 
         try:
-            result = await self._edgar_service.get_filing_text(
+            result = await self._edgar_service.get_filing_sections(
                 context_refs.filing_ref.symbol, context_refs.filing_ref.accession_number
             )
         except ProviderNotFoundError as exc:
@@ -301,18 +280,30 @@ class ClaudeService:
         except ProviderUnavailableError as exc:
             raise AdvisorUnavailableError(exc) from exc
 
-        filing = result.value
+        segmented = result.value
         symbol = context_refs.filing_ref.symbol
-        text, was_truncated = _prepare_filing_text(filing.text)
-        truncated_suffix = " [truncated excerpt]" if was_truncated else ""
+        accession_number = context_refs.filing_ref.accession_number
+        filing_document = build_filing_document(segmented, _MAX_FILING_CHARS)
+
+        excerpt_suffix = " [section excerpt]" if segmented.mode == "sections" else ""
+        if filing_document.was_truncated:
+            excerpt_suffix = " [truncated excerpt]"
+
         document: DocumentBlockParam = {
             "type": "document",
-            "source": {"type": "text", "media_type": "text/plain", "data": text},
-            "title": f"{symbol} {filing.form} filing ({filing.accession_number}){truncated_suffix}",
+            "source": {
+                "type": "text",
+                "media_type": "text/plain",
+                "data": filing_document.text,
+            },
+            "title": f"{symbol} {segmented.form} filing ({accession_number}){excerpt_suffix}",
             "citations": {"enabled": True},
         }
-        source_label = f"SEC EDGAR filing ({symbol} {filing.form}){truncated_suffix}"
-        return document, source_label
+        return _FilingAttachment(
+            document=document,
+            source_label=f"SEC EDGAR filing ({symbol} {segmented.form}){excerpt_suffix}",
+            provenance_note=filing_document.provenance_note(),
+        )
 
     async def _build_portfolio_context(self, symbols: list[str] | None) -> ContextItem | None:
         """Current holdings, with allocation/concentration/P&L already computed by U2.
@@ -406,14 +397,17 @@ class ClaudeService:
 
 def _build_user_content(
     context_items: list[ContextItem],
-    document_block: DocumentBlockParam | None,
+    attachment: _FilingAttachment | None,
     question: str,
 ) -> list[DocumentBlockParam | TextBlockParam]:
     content: list[DocumentBlockParam | TextBlockParam] = []
-    if document_block is not None:
-        content.append(document_block)
+    blocks = []
+    if attachment is not None:
+        content.append(attachment.document)
+        blocks.append(attachment.provenance_note)
 
-    context_text = "\n\n".join(item.text for item in context_items)
+    blocks.extend(item.text for item in context_items)
+    context_text = "\n\n".join(blocks)
     prompt_text = (
         f"{context_text}\n\nQuestion: {question}" if context_text else f"Question: {question}"
     )
