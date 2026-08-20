@@ -249,3 +249,64 @@ async def test_provider_error_with_existing_cache_returns_stale_labeled_value(
         )
 
     assert result.is_stale is True
+
+
+# --- Company-name lookup, reusing the cached ticker map --------------------
+
+
+@respx.mock
+async def test_resolve_company_names_returns_one_symbols_title(
+    client: httpx.AsyncClient, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+
+    async with db_session_factory() as session:
+        names = await EdgarService(
+            client=client, cache=CacheRepository(session)
+        ).resolve_company_names(["SYNT"])
+
+    assert names == {"SYNT": "Synthetic Test Co"}
+
+
+@respx.mock
+async def test_resolve_company_names_returns_multiple_symbols(
+    client: httpx.AsyncClient, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+
+    async with db_session_factory() as session:
+        names = await EdgarService(
+            client=client, cache=CacheRepository(session)
+        ).resolve_company_names(["SYNT", "OTHR"])
+
+    assert names == {"SYNT": "Synthetic Test Co", "OTHR": "Other Synthetic Co"}
+
+
+@respx.mock
+async def test_resolve_company_names_omits_a_symbol_not_in_the_ticker_map(
+    client: httpx.AsyncClient, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Best-effort, unlike `resolve_cik` -- an unresolved symbol is simply
+    absent from the result, not raised."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+
+    async with db_session_factory() as session:
+        names = await EdgarService(
+            client=client, cache=CacheRepository(session)
+        ).resolve_company_names(["SYNT", "NOTREAL"])
+
+    assert names == {"SYNT": "Synthetic Test Co"}
+
+
+@respx.mock
+async def test_resolve_company_names_with_no_symbols_returns_empty_dict(
+    client: httpx.AsyncClient, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """No ticker-map route mocked -- an empty request must short-circuit
+    before any fetch, or respx (with no matching route) raises."""
+    async with db_session_factory() as session:
+        names = await EdgarService(
+            client=client, cache=CacheRepository(session)
+        ).resolve_company_names([])
+
+    assert names == {}

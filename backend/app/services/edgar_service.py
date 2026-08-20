@@ -14,6 +14,7 @@ filed (only the ticker->CIK mapping can drift, and even that rarely).
 """
 
 import datetime as dt
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -195,15 +196,46 @@ class EdgarService:
             ProviderNotFoundError: `symbol` isn't in SEC's ticker->CIK mapping.
             ProviderUnavailableError: EDGAR is failing and nothing is cached.
         """
-        # Deliberately doesn't propagate this fetch's own `is_stale` into
-        # the caller's overall result: a CIK, once assigned to a public
-        # company, never changes, so a stale-fallback ticker map is
-        # functionally identical to a fresh one for any symbol it already
-        # contains. `list_filings`/`get_filing_text` report staleness from
-        # the submissions/text fetch instead, which is where a real,
-        # user-visible staleness difference (an outdated filing list)
-        # could actually occur.
         symbol = symbol.upper()
+        ticker_map = await self._ticker_map()
+        entry = ticker_map.get(symbol)
+        if entry is None:
+            raise ProviderNotFoundError(_PROVIDER, symbol)
+        return entry["cik"]
+
+    async def resolve_company_names(self, symbols: Sequence[str]) -> dict[str, str]:
+        """Best-effort company-name lookup for `symbols`, from the same cache `resolve_cik` reads.
+
+        Unlike `resolve_cik`, a symbol absent from SEC's mapping (some
+        ETFs, for instance) is silently omitted rather than raised --
+        callers use this to enrich question-matching
+        (`app.domain.symbol_matching`), where a missing name just means
+        that symbol matches on its ticker alone, not an error.
+
+        Returns:
+            `{symbol: title}` for every symbol found, keyed by the symbol
+            exactly as passed in `symbols` (not upper-cased). Symbols not
+            found in SEC's mapping are omitted, not raised.
+        """
+        if not symbols:
+            return {}
+        ticker_map = await self._ticker_map()
+        names: dict[str, str] = {}
+        for symbol in symbols:
+            entry = ticker_map.get(symbol.upper())
+            if entry is not None:
+                names[symbol] = entry["title"]
+        return names
+
+    async def _ticker_map(self) -> dict[str, dict[str, str]]:
+        # Deliberately doesn't propagate this fetch's own `is_stale` into
+        # the caller's overall result: a CIK or registered name, once
+        # assigned to a public company, effectively never changes, so a
+        # stale-fallback ticker map is functionally identical to a fresh
+        # one for any symbol it already contains. `list_filings`/
+        # `get_filing_text` report staleness from the submissions/text
+        # fetch instead, which is where a real, user-visible staleness
+        # difference (an outdated filing list) could actually occur.
         result = await fetch_with_cache(
             cache=self._cache,
             provider=_PROVIDER,
@@ -212,13 +244,15 @@ class EdgarService:
             fetch_live=self._fetch_ticker_map,
             clock=_utcnow,
         )
-        ticker_map: dict[str, str] = result.payload
-        cik = ticker_map.get(symbol)
-        if cik is None:
-            raise ProviderNotFoundError(_PROVIDER, symbol)
-        return cik
+        payload: dict[str, dict[str, str]] = result.payload
+        return payload
 
-    async def _fetch_ticker_map(self) -> dict[str, str]:
+    async def _fetch_ticker_map(self) -> dict[str, dict[str, str]]:
+        """Ticker -> `{"cik": ..., "title": ...}`.
+
+        A plain-dict payload, not a dataclass: `CacheRepository.set` requires
+        a JSON-serializable payload as-is, and a dataclass instance isn't.
+        """
         try:
             response = await self._client.get(_TICKER_MAP_URL)
             response.raise_for_status()
@@ -226,7 +260,10 @@ class EdgarService:
             raise ProviderFetchError("EDGAR ticker mapping request failed") from exc
 
         raw = response.json()
-        return {entry["ticker"].upper(): str(entry["cik_str"]) for entry in raw.values()}
+        return {
+            entry["ticker"].upper(): {"cik": str(entry["cik_str"]), "title": entry["title"]}
+            for entry in raw.values()
+        }
 
     async def _fetch_submissions(self, cik: str) -> CachedResult:
         return await fetch_with_cache(

@@ -218,7 +218,9 @@ async def test_refresh_xbrl_facts_warms_the_cache_for_each_held_symbol(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     respx.get(_TICKER_MAP_URL).mock(
-        return_value=httpx.Response(200, json={"0": {"cik_str": 320193, "ticker": "AAPL"}})
+        return_value=httpx.Response(
+            200, json={"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
+        )
     )
     respx.get(_COMPANY_FACTS_URL).mock(
         return_value=httpx.Response(200, json=synthetic_company_facts())
@@ -241,7 +243,9 @@ async def test_refresh_xbrl_facts_tolerates_a_holding_that_is_not_an_sec_filer(
     """An ETF or non-US listing simply isn't in SEC's ticker map. Expected
     steady state for such a holding, not a run-aborting failure."""
     respx.get(_TICKER_MAP_URL).mock(
-        return_value=httpx.Response(200, json={"0": {"cik_str": 320193, "ticker": "AAPL"}})
+        return_value=httpx.Response(
+            200, json={"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
+        )
     )
     respx.get(_COMPANY_FACTS_URL).mock(
         return_value=httpx.Response(200, json=synthetic_company_facts())
@@ -268,8 +272,8 @@ async def test_refresh_xbrl_facts_one_symbol_outage_does_not_abort_the_batch(
         return_value=httpx.Response(
             200,
             json={
-                "0": {"cik_str": 320193, "ticker": "AAPL"},
-                "1": {"cik_str": 789019, "ticker": "MSFT"},
+                "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
+                "1": {"cik_str": 789019, "ticker": "MSFT", "title": "Microsoft Corporation"},
             },
         )
     )
