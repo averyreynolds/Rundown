@@ -1463,6 +1463,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "anthropic" },
+    { name = "anyio" },
     { name = "apscheduler" },
     { name = "beautifulsoup4" },
     { name = "fastapi" },
@@ -1488,6 +1489,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "anthropic", specifier = ">=0.120.2" },
+    { name = "anyio", specifier = ">=4.4" },
     { name = "apscheduler", specifier = ">=3.11.3" },
     { name = "beautifulsoup4", specifier = ">=4.13" },
     { name = "fastapi", specifier = ">=0.140,<0.141" },

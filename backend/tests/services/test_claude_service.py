@@ -609,6 +609,29 @@ async def test_system_prompt_distinguishes_the_two_filing_grounding_modes() -> N
     assert "do not round, rescale, or restate it" in _SYSTEM_PROMPT
 
 
+def test_system_prompt_instructs_synthesis_over_recitation() -> None:
+    """R3-R5: the model already has trend and cross-source data in context
+    on most questions -- the gap this closes is instructional, not a
+    missing data source. Regression guard for the requirements doc at
+    docs/brainstorms/advisor-synthesis-and-formatting-requirements.md."""
+    from app.services.claude_service import _SYSTEM_PROMPT
+
+    prompt = _SYSTEM_PROMPT.lower()
+    assert "most notable or distinctive" in prompt  # R3: lead, don't recite in order
+    assert "trend or change across those periods" in prompt  # R4: multi-period trends
+    assert "connect them" in prompt  # R5: cross-source connections
+
+
+def test_system_prompt_ties_synthesis_back_to_the_non_directive_rule() -> None:
+    """R6: synthesis instructions must reinforce, not loosen, rule 1 --
+    the prompt has to say so explicitly next to the new instructions, not
+    just rely on rule 1 existing elsewhere in the text."""
+    from app.services.claude_service import _SYSTEM_PROMPT
+
+    assert "violate rule 1" in _SYSTEM_PROMPT
+    assert "never characterize" in _SYSTEM_PROMPT.lower()
+
+
 # --- Prompt caching ---------------------------------------------------------
 
 

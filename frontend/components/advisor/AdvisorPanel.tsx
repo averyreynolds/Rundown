@@ -1,10 +1,29 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { useAdvisor } from "./AdvisorProvider";
 import { formatAsOf } from "@/lib/format";
 import type { AdvisorFilingRef } from "@/lib/rundown-api";
 import type { ChatMessage } from "@/lib/types";
+
+/** Advisor answers are prose the model formats itself (bold, short lists) --
+ * these overrides keep that formatting inside the panel's existing type
+ * scale instead of falling back to the browser's default heading/list sizing. */
+const ADVISOR_MARKDOWN_COMPONENTS = {
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="leading-relaxed first:mt-0 [&:not(:first-child)]:mt-2">{children}</p>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="mt-2 list-disc space-y-1 pl-4 leading-relaxed">{children}</ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="mt-2 list-decimal space-y-1 pl-4 leading-relaxed">{children}</ol>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-ink">{children}</strong>
+  ),
+};
 
 const GENERAL_SUGGESTED_PROMPT = "What's changed in my portfolio recently?";
 
@@ -134,16 +153,23 @@ export function AdvisorPanel() {
                         : "max-w-[92%] rounded-2xl rounded-bl-sm border border-border bg-paper px-3.5 py-2.5 text-sm text-ink"
                     }
                   >
-                    <p className="leading-relaxed">{m.text}</p>
+                    {m.role === "advisor" ? (
+                      <ReactMarkdown components={ADVISOR_MARKDOWN_COMPONENTS}>{m.text}</ReactMarkdown>
+                    ) : (
+                      <p className="leading-relaxed">{m.text}</p>
+                    )}
                     {m.citations && m.citations.length > 0 && (
-                      <ul className="mt-3 space-y-2 border-t border-border/70 pt-2.5">
+                      <ul className="mt-3 space-y-3 border-t border-border/70 pt-2.5">
                         {m.citations.map((c, ci) => (
                           <li key={ci} className="text-xs text-ink-faint">
-                            <span className="font-mono">{c.source}</span>
-                            <span className="mx-1">·</span>
-                            <span className="italic">&ldquo;{c.quote}&rdquo;</span>
-                            <span className="mx-1">·</span>
-                            as of {formatAsOf(c.asOf)}
+                            <div className="flex flex-wrap items-baseline gap-x-1.5">
+                              <span className="font-mono">{c.source}</span>
+                              <span aria-hidden>·</span>
+                              <span>as of {formatAsOf(c.asOf)}</span>
+                            </div>
+                            <blockquote className="mt-1 border-l-2 border-border pl-2 italic leading-relaxed text-ink-secondary">
+                              &ldquo;{c.quote}&rdquo;
+                            </blockquote>
                           </li>
                         ))}
                       </ul>
