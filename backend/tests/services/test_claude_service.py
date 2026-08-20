@@ -28,7 +28,11 @@ from app.services.claude_service import (
     contains_directive_language,
 )
 from app.services.edgar_service import EdgarService
-from app.services.errors import AdvisorUnavailableError, InsufficientContextError
+from app.services.errors import (
+    AdvisorUnavailableError,
+    InsufficientContextError,
+    ProviderFetchError,
+)
 from app.services.finnhub_service import FinnhubService
 from app.services.fmp_service import FmpService
 from app.services.snaptrade_service import SnapTradeService
@@ -90,6 +94,7 @@ async def _build_claude_service(
     anthropic_client: SimpleNamespace,
     positions: list[dict[str, Any]] | None = None,
     connected: bool = True,
+    positions_error: Exception | None = None,
 ) -> ClaudeService:
     """Wire a `ClaudeService` to real sub-services sharing one DB session.
 
@@ -102,6 +107,7 @@ async def _build_claude_service(
         accounts=[synthetic_account()] if connected else [],
         balance=synthetic_balance(),
         positions=positions if positions is not None else [synthetic_stock_position()],
+        positions_error=positions_error,
     )
     snaptrade_service = SnapTradeService(client=snaptrade_client, cache=cache)
     # One EDGAR client shared by the filings and XBRL services, as the real
@@ -179,6 +185,263 @@ async def test_chat_with_no_context_available_raises_insufficient_context(
         )
         with pytest.raises(InsufficientContextError):
             await service.chat("What's a P/E ratio?", ContextRefs())
+
+
+# --- General questions: matching held symbols/names by text ----------------
+# `ContextRefs()` (empty symbols, no filing_ref) is the shape the general
+# "Ask about your portfolio" entry point always sends -- these scenarios
+# are what closes the gap where that entry point never got fundamentals,
+# news, or facts for anything (docs/plans/2026-08-20-001-fix-advisor-
+# general-context-scoping-plan.md).
+
+
+@respx.mock
+async def test_general_question_naming_a_held_ticker_pulls_its_context(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
+    respx.get(_RATIOS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "SYNT", "priceToEarningsRatio": 25.5}])
+    )
+    respx.get(_KEY_METRICS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "SYNT", "revenuePerShareTTM": 6.5}])
+    )
+    respx.get(_NEWS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=synthetic_news_items(1))
+    )
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[synthetic_stock_position(symbol="SYNT")],
+        )
+        await service.chat("What's going on with SYNT?", ContextRefs())
+
+    prompt_text = _prompt_text(anthropic_client)
+    assert "Fundamentals for SYNT" in prompt_text
+    assert "Recent news" in prompt_text
+
+
+@respx.mock
+async def test_general_question_naming_a_held_company_by_name_pulls_its_context(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """No ticker mentioned at all -- only the company's registered name
+    (resolved from SEC's ticker map, per `EdgarService.resolve_company_names`)."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
+    respx.get(_RATIOS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "SYNT", "priceToEarningsRatio": 25.5}])
+    )
+    respx.get(_KEY_METRICS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "SYNT", "revenuePerShareTTM": 6.5}])
+    )
+    respx.get(_NEWS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=synthetic_news_items(1))
+    )
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[synthetic_stock_position(symbol="SYNT")],
+        )
+        # "SYNT" is deliberately absent -- only its registered name,
+        # "Synthetic Test Co" (SYNTHETIC_TICKER_MAP), appears.
+        await service.chat("What's relevant to my Synthetic Test Co position?", ContextRefs())
+
+    prompt_text = _prompt_text(anthropic_client)
+    assert "Fundamentals for SYNT" in prompt_text
+    assert "Recent news" in prompt_text
+
+
+@respx.mock
+async def test_general_question_naming_nothing_held_gets_holdings_only(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Today's behavior, preserved: a question that matches no held symbol
+    or name gets the holdings list and nothing else."""
+    _mock_symbol_providers()
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[synthetic_stock_position(symbol="SYNT")],
+        )
+        await service.chat("How is my portfolio balanced?", ContextRefs())
+
+    prompt_text = _prompt_text(anthropic_client)
+    assert "Current holdings:" in prompt_text
+    assert "Fundamentals for" not in prompt_text
+    assert "Recent news" not in prompt_text
+
+
+@respx.mock
+async def test_matched_symbol_does_not_narrow_the_holdings_list(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
+    respx.get(_RATIOS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get(_KEY_METRICS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get(_NEWS_URL, params={"symbol": "SYNT"}).mock(return_value=httpx.Response(200, json=[]))
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[
+                synthetic_stock_position(symbol="SYNT"),
+                synthetic_stock_position(symbol="MSFT"),
+            ],
+        )
+        await service.chat("What's going on with SYNT?", ContextRefs())
+
+    prompt_text = _prompt_text(anthropic_client)
+    # Both holdings still show, even though only SYNT was matched/mentioned.
+    assert "SYNT" in prompt_text
+    assert "MSFT" in prompt_text
+
+
+@respx.mock
+async def test_explicit_scope_wins_over_a_different_mentioned_symbol(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Mirrors the "Ask about this position" flow: explicit `symbols` is
+    never overridden by matching, even when the question names another
+    held symbol."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    respx.get(_RATIOS_URL, params={"symbol": "AAPL"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "AAPL", "priceToEarningsRatio": 25.5}])
+    )
+    respx.get(_KEY_METRICS_URL, params={"symbol": "AAPL"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "AAPL", "revenuePerShareTTM": 6.5}])
+    )
+    respx.get(_NEWS_URL, params={"symbol": "AAPL"}).mock(
+        return_value=httpx.Response(200, json=synthetic_news_items(1))
+    )
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[
+                synthetic_stock_position(symbol="AAPL"),
+                synthetic_stock_position(symbol="SYNT"),
+            ],
+        )
+        await service.chat("How does AAPL compare to SYNT?", ContextRefs(symbols=["AAPL"]))
+
+    prompt_text = _prompt_text(anthropic_client)
+    assert "Fundamentals for AAPL" in prompt_text
+    # SYNT was mentioned in the question but never explicitly scoped --
+    # matching must not add it just because it's also held.
+    assert "Fundamentals for SYNT" not in prompt_text
+
+
+@respx.mock
+async def test_filing_reference_with_no_symbols_never_triggers_matching(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Regression coverage: the original `effective_symbols` formula only
+    short-circuited on `symbols`, not `filing_ref`, so a filing-only call
+    naming a held symbol in its question text could still pull in
+    fundamentals/news -- a flow this plan promises to leave untouched."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
+    respx.get(_SUBMISSIONS_URL).mock(return_value=httpx.Response(200, json=synthetic_submissions()))
+    respx.get(_FILING_TEXT_URL).mock(return_value=httpx.Response(200, text=synthetic_10k_html()))
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[synthetic_stock_position(symbol="SYNT")],
+        )
+        await service.chat(
+            "What does this filing say about SYNT's revenue?",
+            ContextRefs(
+                filing_ref=FilingRef(symbol="SYNT", accession_number="0000320193-24-000123")
+            ),
+        )
+
+    prompt_text = _prompt_text(anthropic_client)
+    assert "SEC XBRL structured facts for SYNT" in prompt_text
+    assert "Fundamentals for SYNT" not in prompt_text
+    assert "Recent news" not in prompt_text
+
+
+@respx.mock
+async def test_mixed_matched_and_non_held_company_does_not_leak_ungrounded_context(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A question naming one held (matched) symbol alongside a non-held
+    company must not widen what gets sent beyond the matched symbol --
+    the model is left to say the second company isn't covered, per the
+    system prompt's existing grounding rule, not fed data for it."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(200, json=SYNTHETIC_TICKER_MAP))
+    _mock_company_facts()
+    respx.get(_RATIOS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "SYNT", "priceToEarningsRatio": 25.5}])
+    )
+    respx.get(_KEY_METRICS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "SYNT", "revenuePerShareTTM": 6.5}])
+    )
+    respx.get(_NEWS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=synthetic_news_items(1))
+    )
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[synthetic_stock_position(symbol="SYNT")],
+        )
+        # NVDA isn't held -- no context for it should appear anywhere.
+        await service.chat("How does SYNT compare to NVDA?", ContextRefs())
+
+    prompt_text = _prompt_text(anthropic_client)
+    assert "Fundamentals for SYNT" in prompt_text
+    # NVDA appears only in the echoed question text, never as its own
+    # data block -- it isn't held, so nothing was fetched for it.
+    assert "Fundamentals for NVDA" not in prompt_text
+    assert "[NVDA]" not in prompt_text
+
+
+@respx.mock
+async def test_general_question_with_brokerage_unavailable_degrades_to_no_match(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The matching lookup itself must not crash on a real
+    `ProviderUnavailableError` -- not `connected=False`, which only
+    yields an empty-but-successful account list and never exercises this
+    path. With nothing else in context, `chat()` still correctly raises
+    the ordinary `InsufficientContextError` -- same as any other
+    no-context case -- rather than an unhandled exception."""
+    anthropic_client = _fake_anthropic_client("Here's what I have on hand.")
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions_error=ProviderFetchError("SnapTrade is down"),
+        )
+        with pytest.raises(InsufficientContextError):
+            await service.chat("What's going on with my portfolio?", ContextRefs())
 
 
 # --- Filing summarization via the Citations API -----------------------------

@@ -41,7 +41,8 @@ from anthropic.types import DocumentBlockParam, TextBlockParam
 from app.domain.allocation import Allocation
 from app.domain.concentration import flag_concentrated
 from app.domain.filing_sections import build_filing_document
-from app.schemas.advisor import ChatResponse, Citation, ContextRefs
+from app.domain.symbol_matching import HeldSymbol, match_held_symbols
+from app.schemas.advisor import ChatResponse, Citation, ContextRefs, FilingRef
 from app.schemas.xbrl import XbrlFact, XbrlFacts
 from app.services.edgar_service import EdgarService
 from app.services.errors import (
@@ -247,6 +248,16 @@ class ClaudeService:
     async def chat(self, question: str, context_refs: ContextRefs) -> ChatResponse:
         """Answer `question`, grounded only in the data `context_refs` names.
 
+        When the caller supplies neither `symbols` nor `filing_ref` --
+        the shape the general "Ask about your portfolio" entry point
+        always sends -- `question`'s text is matched against the
+        connected portfolio's held tickers and company names
+        (`_match_symbols_in_question`) to find `effective_symbols`, so a
+        general question can still pull fundamentals/news/facts for a
+        position it clearly names. Explicit `symbols` always wins, and a
+        filing reference always suppresses matching entirely, regardless
+        of question wording -- filing summarization is unaffected by this.
+
         Raises:
             InsufficientContextError: no context is available at all (no
                 symbols, no connected portfolio, and no filing reference,
@@ -256,6 +267,10 @@ class ClaudeService:
         """
         attachment = await self._build_filing_attachment(context_refs)
 
+        effective_symbols = context_refs.symbols
+        if not effective_symbols and context_refs.filing_ref is None:
+            effective_symbols = await self._match_symbols_in_question(question)
+
         context_items: list[ContextItem] = []
         portfolio_item = await self._build_portfolio_context(context_refs.symbols or None)
         if portfolio_item is not None:
@@ -264,10 +279,12 @@ class ClaudeService:
         # the company itself reported, each traceable to the filing that
         # reported it, so they are the most authoritative numbers in the
         # context and should be what the model reaches for first.
-        context_items.extend(await self._build_facts_context(context_refs))
-        if context_refs.symbols:
-            context_items.extend(await self._build_fundamentals_context(context_refs.symbols))
-            news_item = await self._build_news_context(context_refs.symbols)
+        context_items.extend(
+            await self._build_facts_context(effective_symbols, context_refs.filing_ref)
+        )
+        if effective_symbols:
+            context_items.extend(await self._build_fundamentals_context(effective_symbols))
+            news_item = await self._build_news_context(effective_symbols)
             if news_item is not None:
                 context_items.append(news_item)
 
@@ -409,7 +426,34 @@ class ClaudeService:
 
         return ContextItem(source="SnapTrade positions", as_of=result.as_of, text="\n".join(lines))
 
-    async def _build_facts_context(self, context_refs: ContextRefs) -> list[ContextItem]:
+    async def _match_symbols_in_question(self, question: str) -> list[str]:
+        """Which held symbols (by ticker or company name) `question` mentions.
+
+        Only called from `chat()` when the caller supplied no explicit
+        symbols and no filing reference. Fails gracefully to no matches
+        rather than raising, mirroring `_build_portfolio_context`'s
+        handling of an unavailable brokerage connection -- a general
+        question with nothing to match against should still fall back to
+        today's holdings-only behavior, not error out.
+        """
+        try:
+            result = await self._snaptrade_service.list_positions()
+        except ProviderUnavailableError:
+            return []
+
+        views = result.value
+        if not views:
+            return []
+
+        names = await self._edgar_service.resolve_company_names([view.symbol for view in views])
+        held = [
+            HeldSymbol(symbol=view.symbol, company_name=names.get(view.symbol)) for view in views
+        ]
+        return match_held_symbols(question, held)
+
+    async def _build_facts_context(
+        self, symbols: list[str], filing_ref: FilingRef | None
+    ) -> list[ContextItem]:
         """SEC XBRL facts for every symbol in scope, newest period first.
 
         Selection is symbol-wide rather than scoped to the referenced
@@ -421,15 +465,14 @@ class ClaudeService:
         A filing reference implies its symbol even when the caller didn't
         list it: asking about a 10-K is asking about that company.
         """
-        filing_ref = context_refs.filing_ref
-        symbols = [symbol.upper() for symbol in context_refs.symbols]
+        upper_symbols = [symbol.upper() for symbol in symbols]
         if filing_ref is not None:
-            symbols.append(filing_ref.symbol.upper())
+            upper_symbols.append(filing_ref.symbol.upper())
 
         items: list[ContextItem] = []
         # dict.fromkeys rather than a set: a caller listing the same symbol
         # twice shouldn't reorder the context non-deterministically.
-        for symbol in dict.fromkeys(symbols):
+        for symbol in dict.fromkeys(upper_symbols):
             referenced_accession = (
                 filing_ref.accession_number
                 if filing_ref is not None and filing_ref.symbol.upper() == symbol
