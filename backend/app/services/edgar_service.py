@@ -239,7 +239,13 @@ class EdgarService:
         result = await fetch_with_cache(
             cache=self._cache,
             provider=_PROVIDER,
-            cache_key="ticker_cik_map",
+            # "_v2": the cached payload shape changed from `dict[str, str]`
+            # (ticker -> CIK) to `dict[str, dict[str, str]]` (ticker ->
+            # {"cik", "title"}). A bumped key means a pre-existing cache row
+            # in the old shape is a clean miss -- triggering a fresh live
+            # fetch -- rather than being read back and indexed as a dict
+            # when it's actually a plain string.
+            cache_key="ticker_cik_map_v2",
             ttl_seconds=filings_ttl_seconds(),
             fetch_live=self._fetch_ticker_map,
             clock=_utcnow,

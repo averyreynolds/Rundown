@@ -445,7 +445,10 @@ class ClaudeService:
         if not views:
             return []
 
-        names = await self._edgar_service.resolve_company_names([view.symbol for view in views])
+        try:
+            names = await self._edgar_service.resolve_company_names([view.symbol for view in views])
+        except ProviderUnavailableError:
+            names = {}
         held = [
             HeldSymbol(symbol=view.symbol, company_name=names.get(view.symbol)) for view in views
         ]

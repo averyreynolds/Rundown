@@ -71,3 +71,14 @@ def test_empty_question_returns_empty_list() -> None:
     held = [HeldSymbol(symbol="AAPL", company_name="Apple Inc.")]
 
     assert match_held_symbols("", held) == []
+
+
+def test_duplicate_symbol_across_two_accounts_matches_once() -> None:
+    """`list_positions` is account-scoped, not merged by symbol -- the same
+    stock held at two brokerages produces two `HeldSymbol` entries."""
+    held = [
+        HeldSymbol(symbol="AAPL", company_name="Apple Inc."),
+        HeldSymbol(symbol="AAPL", company_name="Apple Inc."),
+    ]
+
+    assert match_held_symbols("What's going on with AAPL?", held) == ["AAPL"]

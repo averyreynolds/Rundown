@@ -444,6 +444,42 @@ async def test_general_question_with_brokerage_unavailable_degrades_to_no_match(
             await service.chat("What's going on with my portfolio?", ContextRefs())
 
 
+@respx.mock
+async def test_general_question_with_edgar_unavailable_degrades_to_ticker_only(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Regression coverage: matching's company-name lookup previously had
+    no failure handling of its own, so an EDGAR outage (unlike a
+    SnapTrade outage) would crash a general question instead of degrading
+    -- a new failure mode, since a general question never touched EDGAR
+    at all before this feature existed."""
+    respx.get(_TICKER_MAP_URL).mock(return_value=httpx.Response(503))
+    respx.get(_RATIOS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "SYNT", "priceToEarningsRatio": 25.5}])
+    )
+    respx.get(_KEY_METRICS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=[{"symbol": "SYNT", "revenuePerShareTTM": 6.5}])
+    )
+    respx.get(_NEWS_URL, params={"symbol": "SYNT"}).mock(
+        return_value=httpx.Response(200, json=synthetic_news_items(1))
+    )
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session,
+            anthropic_client=anthropic_client,
+            positions=[synthetic_stock_position(symbol="SYNT")],
+        )
+        # No company name can be resolved with EDGAR down, but the ticker
+        # itself still matches -- matching degrades to ticker-only, it
+        # doesn't fail outright.
+        await service.chat("What's going on with SYNT?", ContextRefs())
+
+    prompt_text = _prompt_text(anthropic_client)
+    assert "Fundamentals for SYNT" in prompt_text
+
+
 # --- Filing summarization via the Citations API -----------------------------
 
 
