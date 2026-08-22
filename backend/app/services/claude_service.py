@@ -68,7 +68,10 @@ _CONCENTRATION_THRESHOLD_PCT = Decimal(20)
 # how much news a symbol has.
 _MAX_NEWS_ITEMS_PER_SYMBOL = 5
 
-_MAX_TOKENS = 1024
+# 1024 was routinely too tight for a multi-position, multi-period answer
+# with citations -- real responses were observed cutting off mid-sentence
+# (a dangling "**" from an unclosed bold span, a truncated dollar figure).
+_MAX_TOKENS = 2048
 
 # SEC's inline-XBRL filing HTML is mostly markup -- tags, inline styles,
 # table structure, XBRL contextRefs -- routinely 5-10x the size of the
@@ -309,6 +312,18 @@ class ClaudeService:
         answer, citations = _extract_answer_and_citations(
             response, attachment.source_label if attachment is not None else None
         )
+
+        if not answer.strip():
+            # Observed in practice: Claude occasionally returns a response
+            # with no usable text content (e.g. an empty completion) even
+            # on a 200 from the SDK, so `APIError` alone doesn't catch it.
+            # Silently returning "" would render as a blank chat bubble --
+            # indistinguishable from a broken UI -- rather than the never-
+            # partial/garbled-response guarantee this module documents for
+            # every other Claude-side failure.
+            raise AdvisorUnavailableError(
+                RuntimeError("Claude returned no text content for this question.")
+            )
 
         if contains_directive_language(answer):
             logger.warning(

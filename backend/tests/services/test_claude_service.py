@@ -1014,6 +1014,26 @@ async def test_claude_api_failure_raises_advisor_unavailable(
             await service.chat("How is my AAPL position doing?", ContextRefs(symbols=["AAPL"]))
 
 
+@respx.mock
+async def test_empty_answer_text_raises_advisor_unavailable_instead_of_blank_response(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Regression coverage: a 200 from the SDK whose text content is empty
+    (observed in practice -- Claude occasionally returns no usable text)
+    previously passed straight through as `ChatResponse(answer="")`, which
+    renders as a blank chat bubble instead of surfacing any error. That's
+    the same never-partial/garbled-response guarantee this module already
+    enforces for outright API failures, just for a different failure
+    shape."""
+    _mock_symbol_providers()
+    anthropic_client = _fake_anthropic_client(text="")
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(session, anthropic_client=anthropic_client)
+        with pytest.raises(AdvisorUnavailableError):
+            await service.chat("How is my AAPL position doing?", ContextRefs(symbols=["AAPL"]))
+
+
 # --- Parity with U2's own domain functions ----------------------------------
 
 
