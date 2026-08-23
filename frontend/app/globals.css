@@ -43,3 +43,26 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
+
+/*
+ * The allocation bar's segments grow in from zero width on mount, paired
+ * with the total value's count-up (AnimatedCurrency) as the page's one
+ * authored motion moment -- see DESIGN.md "Motion". `@starting-style`
+ * degrades gracefully to no animation on unsupported browsers.
+ */
+.segment-grow {
+  transform-origin: left;
+  transition: transform 900ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@starting-style {
+  .segment-grow {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment-grow {
+    transition: none;
+  }
+}

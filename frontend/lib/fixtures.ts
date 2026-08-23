@@ -170,7 +170,7 @@ function withStaleness(asOf: string, stale: boolean): { asOf: string; isStale: b
   return stale ? { asOf: STALE_AS_OF, isStale: true } : { asOf, isStale: false };
 }
 
-export function getHoldings(): HoldingDetail[] {
+export function getHoldings(stale = false): HoldingDetail[] {
   return RAW_POSITIONS.map((pos) => {
     const flagReason = FLAGS[pos.symbol] ?? null;
 
@@ -218,10 +218,10 @@ export function getHoldings(): HoldingDetail[] {
       flagged: flagReason !== null,
       flagReason,
       fundamentals: fundamentals
-        ? { value: fundamentals, source: "Financial Modeling Prep", asOf: "2026-07-29T06:00:00Z", isStale: false }
+        ? { value: fundamentals, source: "Financial Modeling Prep", ...withStaleness("2026-07-29T06:00:00Z", stale) }
         : null,
-      news: news ? { value: news, source: "Finnhub", asOf: "2026-07-30T06:00:00Z", isStale: false } : null,
-      filing: filing ? { value: filing, source: "SEC EDGAR", asOf: "2026-07-30T06:00:00Z", isStale: false } : null,
+      news: news ? { value: news, source: "Finnhub", ...withStaleness("2026-07-30T06:00:00Z", stale) } : null,
+      filing: filing ? { value: filing, source: "SEC EDGAR", ...withStaleness("2026-07-30T06:00:00Z", stale) } : null,
     } satisfies HoldingDetail;
   });
 }

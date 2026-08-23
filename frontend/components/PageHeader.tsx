@@ -1,8 +1,8 @@
-export function PageHeader() {
+export function PageHeader({ tagline = "Does this matter?" }: { tagline?: string | null }) {
   return (
-    <header className="mb-8">
-      <h1 className="text-lg font-semibold tracking-tight text-ink">Rundown</h1>
-      <p className="text-sm text-ink-secondary">Does this matter?</p>
+    <header className="mb-10">
+      <h1 className="text-xl font-semibold tracking-tight text-ink">Rundown</h1>
+      {tagline && <p className="mt-1 text-sm text-ink-secondary">{tagline}</p>}
     </header>
   );
 }

@@ -19,10 +19,11 @@ colors:
 typography:
   display:
     fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "2.25rem"
+    fontSize: "3rem"
+    fontSizeLarge: "3.75rem"
     fontWeight: 600
     lineHeight: "1"
-    letterSpacing: "-0.02em"
+    letterSpacing: "-0.03em"
   title:
     fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.125rem"
@@ -146,21 +147,25 @@ A structurally separate pair from the primary accent, used exclusively for data 
 **Character:** A single workhorse system-sans family used at a narrow, disciplined weight range (400/500/600). No display serif, no editorial voice — the type itself is meant to disappear behind the numbers.
 
 ### Hierarchy
-- **Display** (600, 2.25rem/36px, leading-none, −0.02em tracking, tabular-nums): the single largest figure on the page — total portfolio value. Used exactly once per view.
-- **Title** (600, 1.125rem/18px, tight tracking): the page wordmark ("Rundown") in `PageHeader`; also 500-weight 1rem for state headings (empty/error/loading captions).
-- **Body** (400–500, 0.875rem/14px, 1.5 leading): row text, chat messages, descriptive copy — the working size for nearly everything.
-- **Label** (500, 0.75rem/12px): chips, section eyebrows ("Holdings", "Fundamentals"), source/as-of lines, dt labels in the expanded holding detail.
+- **Display** (600, 3rem/48px scaling to 3.75rem/60px at `sm:`, leading-none, −0.03em tracking, tabular-nums): the single largest figure on the page — total portfolio value. Used exactly once per view, and animates in once via `AnimatedCurrency` (see Motion below) rather than rendering statically.
+- **Title** (600, 1.25rem/20px, tight tracking): the page wordmark ("Rundown") in `PageHeader`; also 500-weight 1rem for state headings (empty/error/loading captions).
+- **Body** (400–500, 0.875rem/14px, 1.5 leading): row text, chat messages, descriptive copy — the working size for nearly everything. Holdings-row ticker symbols and the "Holdings" section label step up to 1rem/16px semibold as scan anchors — everything else in a row stays at Body.
+- **Label** (500, 0.75rem/12px): chips, section eyebrows ("Fundamentals"), source/as-of lines, dt labels in the expanded holding detail.
 
 All numeric values that appear in a column or are compared across rows (currency, percentages, quantities) use `tabular-nums` — this is applied consistently across `PortfolioSummary`, `HoldingRow`, and `AllocationBar`, and should be treated as a hard convention for any new numeric field, not an occasional nicety.
+
+`PnlValue` takes an optional `size` prop (`sm` default, `md`): `sm` is the Body-level treatment used in every holdings row; `md` steps the figure up to `text-base font-semibold` and is reserved for the one portfolio-level P&L in `PortfolioSummary`, so it can hold its own next to the enlarged Display total without competing with row-level figures. The neutral-ink, no-red/green rule applies identically at both sizes.
 
 ### Named Rules
 **The Tabular Numerals Rule.** Any number a user might scan down a column or compare across rows renders with `tabular-nums`. No numeric column may use proportional figures.
 
 ## Layout
 
-The page is a single centered column, `max-w-[720px]`, with `mx-auto` and responsive padding (`px-5 py-10` on mobile, `sm:px-6 sm:py-14` at larger widths). There is no multi-column dashboard grid — this is a narrow, scannable rundown, not a data-dense terminal layout, consistent with the consumer-fintech craft bar (Robinhood/Copilot/Wealthfront) over enterprise-SaaS density.
+The page is a single centered column, `max-w-[720px]`, with `mx-auto` and responsive padding (`px-5 py-10` on mobile, `sm:px-6 sm:py-14` at larger widths) — this is the base layout for the header and every non-`ready` state (empty, error, loading).
 
-Vertical rhythm is section-level: page header, then the portfolio summary card, then the holdings list, each separated by `mt-8`. Inside cards, spacing steps in a tight, consistent scale (`gap-x-4`, `gap-y-1.5`, `mt-1.5`, `mt-6`) that reads as Tailwind's default 4px base — no bespoke spacing scale beyond that.
+**The ready state is the one deliberate exception.** Once holdings exist, the container widens to `lg:max-w-[1180px]` at the `lg:` breakpoint and splits into two columns (`lg:grid-cols-[720px_1fr]`, `lg:gap-8`): the left column keeps the original single-column content (summary card, holdings list) at its original width, and the right column holds `HoldingDetailPanel` — a persistent master-detail panel showing whichever holding is selected. This was a deliberate, user-directed layout change (not a drift or an experiment) made to support screening a held position in more depth without leaving the list. Below `lg:`, there is still no multi-column grid: the right column disappears entirely and `HoldingDetailPanel` instead renders as a full-width slide-in overlay from the right (the same `fixed inset-0` / backdrop / `role="dialog"` mechanics as the advisor drawer), triggered by selecting a row. A narrow viewport never has to render two columns at once.
+
+Vertical rhythm is section-level: page header, then the portfolio summary card, then the holdings list, each separated by `mt-10`. Inside cards, spacing steps in a tight, consistent scale (`gap-x-4`, `gap-y-1.5`, `mt-2`, `mt-6`, `mt-7`) that reads as Tailwind's default 4px base — no bespoke spacing scale beyond that. The summary card's internal padding steps up to `p-7 sm:p-8` (28–32px), one notch more generous than the `p-6 sm:p-7` every other top-level card still uses, to give the enlarged Display figure room to breathe.
 
 Holdings rows collapse from a three-column grid (`ticker/name` | `value/weight` | `P&L`) at `sm:` breakpoints to a two-row stacked layout below it, per the surface brief's mobile requirement that the summary stay pinned and the holdings list become the primary scroll surface. The holdings list itself does not paginate at the stated 5–30 position range — it scrolls.
 
@@ -170,6 +175,13 @@ Rundown is flat by default: cards are distinguished by a 1px border (`--color-bo
 
 ### Named Rules
 **The Flat-At-Rest Rule.** Surfaces embedded in page flow never carry a shadow. Shadow only appears on elements that overlay the page (modals, drawers, floating triggers) — it signals "this is not part of the page," not "this card is important."
+
+## Motion
+
+Rundown has exactly one authored motion moment, on the portfolio summary card, and no motion anywhere else in normal page flow: the Display total-value figure counts up from zero (`components/AnimatedCurrency.tsx`, ease-out-expo, 900ms) while the allocation bar's segments grow in from zero width in the same beat (the `.segment-grow` utility in `globals.css`, `transform: scaleX()` off a `transform-origin: left` — never an animated `width`, which thrashes layout). Together they read as one reveal for the summary card on load, not two competing effects. Both respect `prefers-reduced-motion: reduce` by rendering their final state immediately.
+
+### Named Rules
+**The One-Moment Rule.** Motion is reserved for the summary card's load-in beat. Do not add entrance animation to holdings rows, state transitions, or any other section — a list of 5–30 rows staggering in on every load is exactly the "scattered effects" this system refuses. If a future feature needs its own moment, it should replace or extend this one rather than add a second.
 
 ## Shapes
 
@@ -194,7 +206,7 @@ Borders are uniformly 1px and low-contrast (`border-border` at rest, stepping up
 - **Background:** `surface` (white) for top-level cards; `paper` (the page background) for content nested one level inside a surface card — this tonal step, not a border, is what signals nesting depth.
 - **Shadow Strategy:** none at rest; see Elevation & Depth.
 - **Border:** 1px `border-border` on every card, `border-border-strong` on hover for interactive nested cards (e.g. the news-item link).
-- **Internal Padding:** `p-6`/`p-7` (24–28px) for top-level cards; `px-3.5 py-3` (14/12px) for nested detail boxes; `px-1 py-4` per holdings row.
+- **Internal Padding:** `p-6`/`p-7` (24–28px) for top-level cards, except the portfolio summary card at `p-7`/`p-8` (28–32px) — see Layout; `px-3.5 py-3` (14/12px) for nested detail boxes; `px-1 py-4` per holdings row.
 
 ### Inputs / Fields
 - **Style:** `rounded-full`, `border-border`, `bg-paper`, `px-4 py-2.5` — used for the single text input in the advisor chat composer.
@@ -207,7 +219,10 @@ Borders are uniformly 1px and low-contrast (`border-border` at rest, stepping up
 Every provider-sourced value — portfolio freshness, fundamentals, news, filings — renders a trailing `text-xs text-ink-faint` line reading `{source} · as of {formatAsOf(timestamp)}` (or `{source} · {relative}` for news bylines). This mirrors the backend's `SourcedValue<T>` wrapper (`backend/app/schemas/common.py`) directly in the type layer (`lib/types.ts`) and is a hard product rule, not a nice-to-have — CLAUDE.md requires provenance and freshness on anything shown to the user. Any new data-bearing component must carry this line.
 
 ### Navigation
-There is no persistent nav chrome on this surface — `PageHeader` is a static wordmark + tagline, not a nav bar. The advisor is the one persistent cross-cutting affordance: a floating circular trigger (bottom-right, `bg-ink`) that opens a right-side drawer, reachable globally or scoped to a specific position from within a holding row.
+There is no persistent nav chrome on this surface — `PageHeader` is a static wordmark + tagline, not a nav bar. The advisor is a persistent cross-cutting affordance: a floating circular trigger (bottom-right, `bg-ink`) that opens a right-side drawer, reachable globally or scoped to a specific position from within a holding row.
+
+### Master-Detail (Holdings)
+On the ready state at `lg:` and up, `HoldingSelectionProvider` tracks which single holding (if any) is selected; clicking a row selects it (clicking the same row again deselects), and `HoldingDetailPanel` renders that holding's quantity/price/cost-basis/account, its flag reason, and its supporting data (fundamentals/news/filing) in the persistent right column. Only one holding is ever selected at a time — this is not a multi-expand accordion. Below `lg:`, the same panel renders as an overlay instead of a column; the selection model doesn't change, only its presentation.
 
 ## Do's and Don'ts
 

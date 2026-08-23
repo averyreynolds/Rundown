@@ -1,7 +1,11 @@
 import type { HoldingDetail } from "@/lib/types";
 
-const RAMP_OPACITY = [1, 0.82, 0.66, 0.52, 0.4, 0.3];
+const RAMP_OPACITY = [1, 0.75, 0.55, 0.4];
 const MAX_SEGMENTS = RAMP_OPACITY.length;
+
+function accentAt(opacity: number): string {
+  return `color-mix(in srgb, var(--color-accent) ${opacity * 100}%, transparent)`;
+}
 
 export function AllocationBar({ holdings }: { holdings: HoldingDetail[] }) {
   const sorted = [...holdings].sort((a, b) => b.position.allocationPct - a.position.allocationPct);
@@ -11,18 +15,19 @@ export function AllocationBar({ holdings }: { holdings: HoldingDetail[] }) {
 
   return (
     <div>
-      <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-border">
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-border">
         {shown.map((h, i) => (
           <div
             key={h.position.symbol}
-            style={{ width: `${h.position.allocationPct}%`, backgroundColor: `rgba(54, 84, 214, ${RAMP_OPACITY[i]})` }}
+            style={{ width: `${h.position.allocationPct}%`, backgroundColor: accentAt(RAMP_OPACITY[i]) }}
             title={`${h.position.symbol} — ${h.position.allocationPct.toFixed(1)}%`}
+            className="segment-grow"
           />
         ))}
         {restPct > 0 && (
           <div
             style={{ width: `${restPct}%` }}
-            className="bg-border-strong"
+            className="segment-grow bg-border-strong"
             title={`Other — ${restPct.toFixed(1)}%`}
           />
         )}
@@ -33,7 +38,7 @@ export function AllocationBar({ holdings }: { holdings: HoldingDetail[] }) {
             <span
               aria-hidden
               className="inline-block h-2 w-2 rounded-full"
-              style={{ backgroundColor: `rgba(54, 84, 214, ${RAMP_OPACITY[i]})` }}
+              style={{ backgroundColor: accentAt(RAMP_OPACITY[i]) }}
             />
             {h.position.symbol}
             <span className="tabular-nums text-ink-faint">{h.position.allocationPct.toFixed(1)}%</span>

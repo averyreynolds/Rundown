@@ -28,7 +28,7 @@ export function LoadingSkeleton() {
       <section className="mt-8">
         <Bar className="mb-2 h-4 w-20" />
         <div className="rounded-2xl border border-border bg-surface px-5 sm:px-6">
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="flex items-center gap-4 border-b border-border py-4 last:border-b-0">
               <div className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-border" />
               <div className="flex-1 space-y-2">
