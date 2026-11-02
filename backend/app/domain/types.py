@@ -13,7 +13,17 @@ financial arithmetic.
 """
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class PricePoint:
+    """One EOD close, provider-independent -- `services/fmp_service.py` maps
+    FMP's response shape into this, never the other way around."""
+
+    date: date
+    close: Decimal
 
 
 @dataclass(frozen=True, slots=True)

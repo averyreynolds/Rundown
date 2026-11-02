@@ -23,6 +23,12 @@ def fundamentals_ttl_seconds() -> int:
     return get_settings().fundamentals_ttl_seconds
 
 
+def price_history_ttl_seconds() -> int:
+    """FMP daily-close history TTL: same free-tier budget as fundamentals, and EOD
+    data has nothing new to report until the next close regardless."""
+    return get_settings().price_history_ttl_seconds
+
+
 def filings_ttl_seconds() -> int:
     """SEC EDGAR filings TTL: very long, since published filing text never changes."""
     return get_settings().edgar_ttl_seconds

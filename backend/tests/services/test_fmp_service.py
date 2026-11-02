@@ -15,11 +15,13 @@ import respx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.cache.cache_repository import CacheRepository
+from app.domain.price_windows import PriceWindow
 from app.services.errors import ProviderNotFoundError, ProviderUnavailableError
 from app.services.fmp_service import FmpService
 
 _RATIOS_URL = "https://financialmodelingprep.com/stable/ratios"
 _KEY_METRICS_URL = "https://financialmodelingprep.com/stable/key-metrics-ttm"
+_PRICE_HISTORY_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 
 
 def _ratios_payload(symbol: str = "AAPL") -> list[dict[str, str | float]]:
@@ -28,6 +30,14 @@ def _ratios_payload(symbol: str = "AAPL") -> list[dict[str, str | float]]:
 
 def _key_metrics_payload(symbol: str = "AAPL") -> list[dict[str, str | float]]:
     return [{"symbol": symbol, "revenuePerShareTTM": 6.5}]
+
+
+def _price_history_payload(symbol: str = "AAPL") -> list[dict[str, str | float]]:
+    # FMP reports most-recent-first; the service is expected to re-sort chronologically.
+    return [
+        {"symbol": symbol, "date": "2024-01-03", "close": 187.5, "open": 186.0},
+        {"symbol": symbol, "date": "2024-01-02", "close": 185.0, "open": 184.0},
+    ]
 
 
 @pytest.fixture
@@ -133,4 +143,94 @@ async def test_unknown_symbol_raises_provider_not_found(
         with pytest.raises(ProviderNotFoundError):
             await FmpService(client=client, cache=CacheRepository(session)).get_fundamentals(
                 "NOTREAL"
+            )
+
+
+# --- Price history --------------------------------------------------------
+
+
+@respx.mock
+async def test_get_price_history_returns_chronologically_sorted_closes(
+    client: httpx.AsyncClient,
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    respx.get(_PRICE_HISTORY_URL).mock(
+        return_value=httpx.Response(200, json=_price_history_payload())
+    )
+
+    async with db_session_factory() as session:
+        result = await FmpService(client=client, cache=CacheRepository(session)).get_price_history(
+            "aapl"
+        )
+
+    assert result.source == "Financial Modeling Prep"
+    assert result.is_stale is False
+    assert [p.date.isoformat() for p in result.value.points] == ["2024-01-02", "2024-01-03"]
+    assert result.value.points[0].close == Decimal("185.0")
+    assert result.value.points[1].close == Decimal("187.5")
+    assert result.value.price_change_dollars == Decimal("2.5")
+
+
+@respx.mock
+async def test_price_history_second_call_within_ttl_does_not_trigger_second_http_call(
+    client: httpx.AsyncClient,
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    route = respx.get(_PRICE_HISTORY_URL).mock(
+        return_value=httpx.Response(200, json=_price_history_payload())
+    )
+
+    async with db_session_factory() as session:
+        await FmpService(client=client, cache=CacheRepository(session)).get_price_history("AAPL")
+    async with db_session_factory() as session:
+        await FmpService(client=client, cache=CacheRepository(session)).get_price_history("AAPL")
+
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_price_history_unknown_symbol_raises_provider_not_found(
+    client: httpx.AsyncClient,
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    respx.get(_PRICE_HISTORY_URL).mock(return_value=httpx.Response(200, json=[]))
+
+    async with db_session_factory() as session:
+        with pytest.raises(ProviderNotFoundError):
+            await FmpService(client=client, cache=CacheRepository(session)).get_price_history(
+                "NOTREAL"
+            )
+
+
+@respx.mock
+async def test_get_price_history_slices_to_the_requested_window(
+    client: httpx.AsyncClient,
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    respx.get(_PRICE_HISTORY_URL).mock(
+        return_value=httpx.Response(200, json=_price_history_payload())
+    )
+
+    async with db_session_factory() as session:
+        result = await FmpService(client=client, cache=CacheRepository(session)).get_price_history(
+            "AAPL", window=PriceWindow.ONE_DAY
+        )
+
+    # ONE_DAY slices to the trailing two points regardless of how much history
+    # is cached -- the same two points this payload already has.
+    assert len(result.value.points) == 2
+    assert result.value.price_change_dollars == Decimal("2.5")
+
+
+@respx.mock
+async def test_price_history_provider_error_with_no_cache_raises_provider_unavailable(
+    client: httpx.AsyncClient,
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    respx.get(_PRICE_HISTORY_URL).mock(return_value=httpx.Response(500))
+
+    async with db_session_factory() as session:
+        with pytest.raises(ProviderUnavailableError):
+            await FmpService(client=client, cache=CacheRepository(session)).get_price_history(
+                "AAPL"
             )

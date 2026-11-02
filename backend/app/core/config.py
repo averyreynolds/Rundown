@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # U4 (positions), U5 (fundamentals), U6 (filings), and U7 (news).
     positions_ttl_seconds: int = 300  # 5 min: avoid hammering SnapTrade on UI polling.
     fundamentals_ttl_seconds: int = 86_400  # 24h: FMP free tier is ~250 req/day.
+    price_history_ttl_seconds: int = (
+        86_400  # 24h: same FMP budget; EOD data only moves once/day anyway.
+    )
     news_ttl_seconds: int = 14_400  # 4h: Finnhub free tier is 60 calls/min.
     edgar_ttl_seconds: int = 604_800  # 7d: published filing text never changes.
 

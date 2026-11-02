@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 _RATIOS_URL = "https://financialmodelingprep.com/stable/ratios"
 _KEY_METRICS_URL = "https://financialmodelingprep.com/stable/key-metrics-ttm"
+_PRICE_HISTORY_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 
 
 def _mock_fmp_success(symbol: str = "AAPL") -> None:
@@ -66,3 +67,43 @@ def test_get_fundamentals_when_fmp_down_with_no_cache_returns_502(
     response = api_client.get("/fundamentals/AAPL", headers=auth_headers)
 
     assert response.status_code == 502
+
+
+@respx.mock
+def test_get_price_history_with_valid_token_returns_200(
+    api_client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    respx.get(_PRICE_HISTORY_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"symbol": "AAPL", "date": "2024-01-03", "close": 187.5},
+                {"symbol": "AAPL", "date": "2024-01-02", "close": 185.0},
+            ],
+        )
+    )
+
+    response = api_client.get("/fundamentals/AAPL/price-history", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "Financial Modeling Prep"
+    assert [p["date"] for p in body["value"]["points"]] == ["2024-01-02", "2024-01-03"]
+    assert body["value"]["price_change_dollars"] == "2.5"
+
+
+def test_get_price_history_without_bearer_token_returns_401(api_client: TestClient) -> None:
+    response = api_client.get("/fundamentals/AAPL/price-history")
+
+    assert response.status_code == 401
+
+
+@respx.mock
+def test_get_price_history_for_unknown_symbol_returns_404(
+    api_client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    respx.get(_PRICE_HISTORY_URL).mock(return_value=httpx.Response(200, json=[]))
+
+    response = api_client.get("/fundamentals/NOTREAL/price-history", headers=auth_headers)
+
+    assert response.status_code == 404
