@@ -1,5 +1,5 @@
 """`POST /portfolio/connect`, `GET /portfolio/accounts`, `GET /portfolio/positions`,
-`GET /portfolio/company-names`.
+`GET /portfolio/rollup`, `GET /portfolio/company-names`.
 
 SnapTrade is wired up read-only only, using Personal-tier auth -- see
 `app/services/snaptrade_service.py`'s module docstring for the exact
@@ -12,7 +12,12 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies import get_edgar_service, get_snaptrade_service
 from app.schemas.common import SourcedValue
-from app.schemas.portfolio import AccountSummary, ConnectResponse, PositionView
+from app.schemas.portfolio import (
+    AccountSummary,
+    ConnectResponse,
+    PortfolioRollupView,
+    PositionView,
+)
 from app.services.edgar_service import EdgarService
 from app.services.snaptrade_service import SnapTradeService
 
@@ -41,6 +46,14 @@ async def get_positions(
 ) -> SourcedValue[list[PositionView]]:
     """An empty list is a valid response: no brokerage linked yet (see `/portfolio/connect`)."""
     return await snaptrade_service.list_positions()
+
+
+@router.get("/rollup", summary="Positions merged by symbol, with shares of value, cost, and gain")
+async def get_rollup(
+    snaptrade_service: Annotated[SnapTradeService, Depends(get_snaptrade_service)],
+) -> SourcedValue[PortfolioRollupView]:
+    """An empty rollup is a valid response: no brokerage linked yet (see `/portfolio/connect`)."""
+    return await snaptrade_service.get_rollup()
 
 
 @router.get(
