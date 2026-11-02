@@ -145,7 +145,7 @@
       "name": "P&L Value",
       "kind": "custom",
       "refersTo": null,
-      "description": "Gain/loss display: neutral ink + directional glyph, never red/green. Compliance-driven — see DESIGN.md Colors > Named Rules.",
+      "description": "Gain/loss display: ink figures with a sign and directional glyph; any color sits behind them as a fill. See DESIGN.md Colors > Named Rules.",
       "html": "<span class=\"ds-pnl\"><span class=\"ds-pnl-glyph\">&#9650;</span><span class=\"ds-pnl-amount\">+$1,725.00</span><span class=\"ds-pnl-pct\">(+22.03%)</span></span>",
       "css": ".ds-pnl { display: inline-flex; align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums; font-size: 0.9375rem; } .ds-pnl-glyph { font-size: 0.65em; color: #6b7280; } .ds-pnl-amount { font-weight: 500; color: #14161a; } .ds-pnl-pct { color: #5b6068; }"
     },
@@ -176,7 +176,7 @@
   ],
   "narrative": {
     "northStar": null,
-    "overview": "Rundown is the category standard, executed at full commitment: a consumer-fintech portfolio dashboard in the register of Robinhood, Copilot Money, and Wealthfront, deliberately chosen over two invented visual worlds (a newsroom rundown sheet, an airport split-flap board) during the direction pass recorded in PRODUCT.md. There is no named metaphor here by design — the brief was to play the convention straight, not to smuggle a quirk into it. The system reads as calm, trustworthy, and slightly clinical: neutral paper-and-ink surfaces, one restrained accent, confident tabular numerals, and generous card padding, closer to a well-made banking app than to a trading terminal. The one place this system departs hardest from category convention is deliberate, not accidental: gain/loss is never color-coded red or green. This is a compliance-grounded rule, not a taste preference. Rundown is light-mode only for now, chosen from the use-scene stated in the surface brief.",
+    "overview": "Rundown is the category standard, executed at full commitment: a consumer-fintech portfolio dashboard in the register of Robinhood, Copilot Money, and Wealthfront, deliberately chosen over two invented visual worlds (a newsroom rundown sheet, an airport split-flap board) during the direction pass recorded in PRODUCT.md. There is no named metaphor here by design — the brief was to play the convention straight, not to smuggle a quirk into it. The system reads as calm, trustworthy, and slightly clinical: neutral paper-and-ink surfaces, one restrained accent, confident tabular numerals, and generous card padding, closer to a well-made banking app than to a trading terminal. Gain/loss color is allowed only as a factual description of change since cost, under The Gain/Loss Color Rule; CLAUDE.md hard rule 1 still applies in full to what the assistant and UI say. Rundown is light-mode only for now, chosen from the use-scene stated in the surface brief.",
     "keyCharacteristics": [
       "Neutral paper/ink palette with a single blue-indigo accent, used sparingly (links, the advisor's brand touches, one chip tone)",
       "A second, structurally separate status-color pair (amber for stale, red for error) reserved exclusively for data freshness — never repurposed for gain/loss",
@@ -185,13 +185,13 @@
       "Every provider-sourced data point carries a source · as of [timestamp] line, rendered in the same faint, low-emphasis type"
     ],
     "rules": [
-      { "name": "The Neutral P&L Rule", "body": "Gain/loss is never rendered in red or green. It is always neutral ink (#14161a for the figure, #5b6068 for the percent) with a small ▲/▼ glyph in ink-faint. This is a compliance boundary, not a stylistic restraint — see components/PnlValue.tsx's own comment and CLAUDE.md hard rule 1.", "section": "colors" },
-      { "name": "The Two-Color-System Rule", "body": "The accent (#3654d6 family) and the status pair (amber/red) never cross roles. Accent means brand/interactive/flagged-for-attention; status means how much to trust this data right now.", "section": "colors" },
+      { "name": "The Gain/Loss Color Rule", "body": "Color may show gain/loss only as change since cost on a fixed scale with a legend. Use teal and vermilion fills, not green and red. Figures stay ink with a sign and ▲/▼ glyph. Focus and flags use an ink outline, never a gain/loss color. Copy never uses color as an argument, and CLAUDE.md hard rule 1 still forbids anything directive.", "section": "colors" },
+      { "name": "The Separate-Roles Rule", "body": "The accent (#3654d6 family), the status pair (amber/red), and the gain/loss scale never cross roles. Accent means brand/interactive/flagged-for-attention; status means how much to trust this data right now; gain/loss means change since cost.", "section": "colors" },
       { "name": "The Tabular Numerals Rule", "body": "Any number a user might scan down a column or compare across rows renders with tabular-nums. No numeric column may use proportional figures.", "section": "typography" },
       { "name": "The Flat-At-Rest Rule", "body": "Surfaces embedded in page flow never carry a shadow. Shadow only appears on elements that overlay the page (modals, drawers, floating triggers).", "section": "elevation" }
     ],
     "dos": [
-      "Do render gain/loss in neutral ink with a ▲/▼ glyph only — never red or green (components/PnlValue.tsx).",
+      "Do keep gain/loss figures in ink with a sign and a ▲/▼ glyph, and put any color behind them as a fill with a legend on screen.",
       "Do apply tabular-nums to every number that appears in a column or is compared row-to-row.",
       "Do attach a {source} · as of {timestamp} line to any value fetched from a provider, using formatAsOf for timestamped values.",
       "Do format date-only values (no time-of-day component, e.g. a filing date) with formatDate's explicit timeZone: \"UTC\" — a bare YYYY-MM-DD string parses as UTC midnight, and formatting it in the viewer's local zone can roll it back a day west of UTC. Don't remove the timeZone: \"UTC\" option.",
@@ -199,7 +199,8 @@
       "Do keep shadows reserved for overlay elements (drawer, floating trigger) and flat borders for everything in normal page flow."
     ],
     "donts": [
-      "Don't color-code P&L red/green, or otherwise let a visual treatment read as implicit buy/sell guidance — this is a legal boundary (Investment Advisers Act, CLAUDE.md hard rule 1), not a style call.",
+      "Don't use gain/loss color for anything beyond the fact it encodes, or use color to signal urgency, approval, or what to do next. Directive advice remains a legal boundary (Investment Advisers Act, CLAUDE.md hard rule 1).",
+      "Don't use green and red for gain/loss. The pair fails the colorblind check, and red belongs to fetch errors.",
       "Don't reuse the status-color pair (amber/red) for anything other than data freshness or fetch errors. It must never double as a gain/loss or sentiment color.",
       "Don't ship a data point without a source and as-of timestamp, even in a compact or secondary UI placement.",
       "Don't introduce a second accent hue. The system's Restrained color strategy means one accent, used sparingly.",
