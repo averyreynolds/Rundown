@@ -46,6 +46,20 @@ export interface FundamentalsSnapshot {
   netIncomePerShareTtm: number | null;
 }
 
+// schemas/prices.py
+export type PriceWindow = "1D" | "1W" | "1M" | "3M" | "YTD" | "1Y" | "ALL";
+
+export interface PricePoint {
+  date: string; // date-only, e.g. "2024-06-14"
+  close: number;
+}
+
+export interface PriceHistoryWindow {
+  points: PricePoint[];
+  priceChangeDollars: number | null;
+  priceChangePercent: number | null;
+}
+
 // schemas/filings.py
 export interface FilingMetadata {
   form: string;
@@ -78,11 +92,12 @@ export interface ChatMessage {
 }
 
 /**
- * Frontend-only display model: PositionView plus the fields no backend
- * schema currently carries (company name, a synthesized "worth a look"
- * flag) and the related fundamentals/news/filing this dashboard cites
- * alongside each row. Real integration still needs a company-name
- * source -- see the summary note in the surface brief.
+ * Frontend-only display model: PositionView plus fields no single backend
+ * schema carries directly -- `name` is filled in from
+ * `/portfolio/company-names` (falling back to the ticker for symbols SEC
+ * doesn't recognize), `flagged`/`flagReason` are a synthesized "worth a
+ * look" signal -- and the related fundamentals/news/filing this dashboard
+ * cites alongside each row.
  */
 export interface HoldingDetail {
   position: PositionView;

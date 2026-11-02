@@ -53,7 +53,7 @@ export default async function Home(props: PageProps<"/">) {
           result.kind === "ready" ? "lg:max-w-[1180px]" : ""
         }`}
       >
-        <PageHeader tagline={result.kind === "empty" || result.kind === "error" ? null : undefined} />
+        <PageHeader />
 
         {result.kind === "empty" && <EmptyState />}
         {result.kind === "error" && <ErrorState />}
@@ -93,7 +93,7 @@ function PreviewDashboard({ state }: { state: PreviewState }) {
           state === "stale" ? "lg:max-w-[1180px]" : ""
         }`}
       >
-        <PageHeader tagline={state === "empty" || state === "error" ? null : undefined} />
+        <PageHeader />
 
         {state === "loading" && <LoadingSkeleton />}
         {state === "empty" && <EmptyState />}
