@@ -41,3 +41,30 @@ class PositionView(BaseModel):
     allocation_pct: Decimal
     unrealized_pnl_dollars: Decimal
     unrealized_pnl_percent: Decimal | None
+
+
+class PositionRollupView(BaseModel):
+    """One symbol merged across accounts, with its shares of the portfolio.
+
+    See `app.domain.position_rollup.PositionRollup` for when the nullable
+    figures are `None`.
+    """
+
+    symbol: str
+    quantity: Decimal
+    market_value: Decimal
+    cost_basis: Decimal
+    gain_dollars: Decimal
+    gain_percent: Decimal | None
+    share_of_value_pct: Decimal
+    share_of_cost_pct: Decimal | None
+    share_of_net_gain_pct: Decimal | None
+
+
+class PortfolioRollupView(BaseModel):
+    """Every symbol's rollup, largest value first, plus portfolio totals."""
+
+    positions: list[PositionRollupView]
+    total_market_value: Decimal
+    total_cost_basis: Decimal
+    net_gain_dollars: Decimal
