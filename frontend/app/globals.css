@@ -17,6 +17,16 @@
   --color-status-stale-soft: #fbf1dc;
   --color-status-error: #a83f3f;
   --color-status-error-soft: #fbecec;
+
+  /* Fills behind ink text only -- see "The Gain/Loss Color Rule" in DESIGN.md. */
+  --color-gain-1: #d5efe9;
+  --color-gain-2: #9bdccf;
+  --color-gain-3: #4fbfab;
+  --color-loss-1: #fbe0d5;
+  --color-loss-2: #f7b59d;
+  --color-loss-3: #ee8259;
+  --color-gain-loss-flat: #e8eaee;
+  --color-map-dimmed: #f1f2f4;
 }
 
 @theme inline {
@@ -34,8 +44,16 @@
   --color-status-stale-soft: var(--color-status-stale-soft);
   --color-status-error: var(--color-status-error);
   --color-status-error-soft: var(--color-status-error-soft);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-gain-1: var(--color-gain-1);
+  --color-gain-2: var(--color-gain-2);
+  --color-gain-3: var(--color-gain-3);
+  --color-loss-1: var(--color-loss-1);
+  --color-loss-2: var(--color-loss-2);
+  --color-loss-3: var(--color-loss-3);
+  --color-gain-loss-flat: var(--color-gain-loss-flat);
+  --color-map-dimmed: var(--color-map-dimmed);
+  --font-sans: var(--font-schibsted-grotesk);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
 body {
