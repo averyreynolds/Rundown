@@ -68,6 +68,8 @@ First-time flow: `POST /portfolio/connect` returns a fresh SnapTrade connection 
 
 `POST /advisor/chat` answers a question grounded only in the data you name in `context_refs` (`symbols`, and/or a `filing_ref` for citation-grounded filing summarization) — it never answers from the model's general knowledge, and it never tells you what to do with a position. Returns `422` if none of the referenced context is actually available (no symbols, no connected portfolio, no matching filing).
 
+`POST /advisor/chat/stream` answers the same way, from the same assembled context, as server-sent events: `scope`, then one `reading` per source (`used`, `stale`, or `unavailable`), then a `sentence` for each checked sentence with the map's `focus` and `sizing`. It ends in one of `done` (sources, citations, follow-up questions), `incomplete` (hit the token limit), `interrupted` (Claude failed or declined), or `retract` (a later sentence failed the directive guard, so its `message` replaces everything already sent). No context is still a 422 and failing to reach Claude is still a 502, because both are decided before the response starts. Disconnecting cancels the Claude request.
+
 XBRL facts are included for every symbol in scope, plus the `filing_ref`'s own symbol; facts the referenced filing reported are marked as such. The filing document block is prompt-cached (5-minute TTL), so follow-up questions about the same filing cost a fraction of the first.
 
 ## Running the test suite

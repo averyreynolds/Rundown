@@ -19,6 +19,7 @@ from anthropic import APIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.cache.cache_repository import CacheRepository
+from app.domain.followups import suggested_follow_ups
 from app.schemas.advisor import ContextRefs, FilingRef
 from app.schemas.xbrl import XbrlFact, XbrlFacts
 from app.services.claude_service import (
@@ -38,6 +39,7 @@ from app.services.fmp_service import FmpService
 from app.services.snaptrade_service import SnapTradeService
 from app.services.xbrl_service import XbrlService
 from tests.fixtures.synthetic_advisor import fake_anthropic_client as _fake_anthropic_client
+from tests.fixtures.synthetic_advisor import fake_streaming_anthropic_client
 from tests.fixtures.synthetic_filing import (
     SYNTHETIC_FILING_TEXT,
     SYNTHETIC_TICKER_MAP,
@@ -1059,3 +1061,152 @@ async def test_portfolio_context_flags_concentrated_holdings_via_u2_directly(
     ]
     assert "AAPL" in prompt_text
     assert "over 20% of portfolio" in prompt_text
+
+
+# --- Richer portfolio context ------------------------------------------------
+
+
+def _prompt_text(anthropic_client: SimpleNamespace) -> str:
+    sent = anthropic_client.messages.create.await_args.kwargs
+    return str(sent["messages"][0]["content"][-1]["text"])
+
+
+_GAIN_POSITIONS = [
+    synthetic_stock_position(symbol="AAPL", units=10, price=150.0, cost_basis_per_share=100.0),
+    synthetic_stock_position(symbol="MSFT", units=10, price=100.0, cost_basis_per_share=100.0),
+]
+
+
+@respx.mock
+async def test_portfolio_context_includes_cost_basis_and_computed_shares(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _mock_symbol_providers()
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session, anthropic_client=anthropic_client, positions=_GAIN_POSITIONS
+        )
+        await service.chat("How is my portfolio doing?", ContextRefs())
+
+    prompt = _prompt_text(anthropic_client)
+    assert "market value $2500.00, cost basis $2000.00, net unrealized gain $500.00" in prompt
+    assert "AAPL: 10 shares, market value $1500.00, cost basis $1000.00" in prompt
+    assert "60.0% of portfolio" in prompt
+    assert "50.0% of total cost" in prompt
+    assert "100.0% of net unrealized gain" in prompt
+
+
+@respx.mock
+async def test_scoping_to_one_symbol_keeps_totals_and_shares_of_the_whole_portfolio(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _mock_symbol_providers()
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session, anthropic_client=anthropic_client, positions=_GAIN_POSITIONS
+        )
+        await service.chat("How is AAPL?", ContextRefs(symbols=["AAPL"]))
+
+    prompt = _prompt_text(anthropic_client)
+    assert "net unrealized gain $500.00" in prompt
+    assert "60.0% of portfolio" in prompt
+    assert "100.0% of net unrealized gain" in prompt
+    assert "MSFT" not in prompt
+
+
+@respx.mock
+async def test_a_position_with_no_share_of_gain_says_so(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _mock_symbol_providers()
+    anthropic_client = _fake_anthropic_client()
+    flat = [synthetic_stock_position(symbol="AAPL", units=10, price=100, cost_basis_per_share=100)]
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(
+            session, anthropic_client=anthropic_client, positions=flat
+        )
+        await service.chat("How is my portfolio doing?", ContextRefs())
+
+    prompt = _prompt_text(anthropic_client)
+    assert "net unrealized gain" in prompt
+    assert "of net unrealized gain" not in prompt
+
+
+@respx.mock
+async def test_system_prompt_tells_the_model_to_state_provided_shares_as_given(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _mock_symbol_providers()
+    anthropic_client = _fake_anthropic_client()
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(session, anthropic_client=anthropic_client)
+        await service.chat("How is my portfolio doing?", ContextRefs())
+
+    system = anthropic_client.messages.create.await_args.kwargs["system"]
+    assert "state those figures as given" in system.lower()
+
+
+# --- The guard sees past markdown and line breaks ------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "You **should** sell this position.",
+        "you _should sell_ it",
+        "You should\n\nsell your position.",
+        "*Consider* *buying* more.",
+    ],
+)
+def test_guard_is_not_fooled_by_formatting(text: str) -> None:
+    assert contains_directive_language(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["**The sell-side** covers this.", "The company's _buyback_ continued.", "It **sold** shares."],
+)
+def test_guard_still_allows_ordinary_financial_vocabulary_in_formatting(text: str) -> None:
+    assert not contains_directive_language(text)
+
+
+# --- Follow-ups never carry directive wording --------------------------------
+
+
+def test_every_follow_up_template_passes_the_directive_guard() -> None:
+    for question in [
+        *suggested_follow_ups(("NVDA", "UNH"), ["AAPL", "MSFT"]),
+        *suggested_follow_ups((), ["AAPL", "MSFT"]),
+    ]:
+        assert not contains_directive_language(question)
+        assert "should" not in question.lower()
+
+
+# --- Releasing the Claude stream ---------------------------------------------
+
+
+@respx.mock
+async def test_closing_the_answer_early_closes_the_claude_stream(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A client disconnect cancels the response's generator, which must end the request."""
+    _mock_symbol_providers()
+    anthropic_client = fake_streaming_anthropic_client(
+        "First sentence. ", "Second sentence. Third."
+    )
+
+    async with db_session_factory() as session:
+        service = await _build_claude_service(session, anthropic_client=anthropic_client)
+        answer = await service.open_answer_stream("How is my portfolio?", ContextRefs())
+        events = answer.events()
+        await anext(events)
+        assert anthropic_client.answer_stream.closed is False
+        await events.aclose()
+
+    assert anthropic_client.answer_stream.closed is True

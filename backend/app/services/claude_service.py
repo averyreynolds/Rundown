@@ -11,6 +11,10 @@ Technical Decisions:
 2. `contains_directive_language()` scans the model's *response* for a
    documented list of forbidden phrases before it ever reaches the
    client; on a match, a safe fallback message is substituted instead.
+   `chat()` checks the whole answer. The streaming path checks each sentence
+   and everything released so far before releasing it, so nothing unchecked
+   ever reaches the client, and a failure retracts what came before. A
+   streamed answer that stops early is labeled as partial.
 
 Layer 2 is a lexical guard, not a semantic one: it catches "you should
 sell" but not semantically prescriptive, lexically-clean phrasing like
@@ -31,18 +35,38 @@ not just prompted to be.
 import datetime as dt
 import logging
 import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+import httpx
 from anthropic import APIError, AsyncAnthropic
+from anthropic.lib.streaming import AsyncMessageStream, AsyncMessageStreamManager
 from anthropic.types import DocumentBlockParam, TextBlockParam
 
 from app.domain.allocation import Allocation
 from app.domain.concentration import flag_concentrated
 from app.domain.filing_sections import build_filing_document
+from app.domain.followups import suggested_follow_ups
+from app.domain.map_hints import derive_map_hint
+from app.domain.sentence_stream import SentenceSegmenter
 from app.domain.symbol_matching import HeldSymbol, match_held_symbols
-from app.schemas.advisor import ChatResponse, Citation, ContextRefs, FilingRef
+from app.schemas.advisor import (
+    AdvisorStreamEvent,
+    ChatResponse,
+    Citation,
+    ContextRefs,
+    DoneEvent,
+    FilingRef,
+    IncompleteEvent,
+    InterruptedEvent,
+    ReadingEvent,
+    RetractEvent,
+    ScopeEvent,
+    SentenceEvent,
+    SourceReading,
+)
 from app.schemas.xbrl import XbrlFact, XbrlFacts
 from app.services.edgar_service import EdgarService
 from app.services.errors import (
@@ -104,7 +128,9 @@ _MAX_FILING_CHARS = 120_000
 # refusing or complying with them. Rules 5-6 instruct synthesis --
 # prioritize and connect what's already in context rather than reciting
 # it -- and formatting, without loosening 1-4: rule 5 explicitly
-# reiterates the no-evaluative-language boundary from rule 1.
+# reiterates the no-evaluative-language boundary from rule 1. Rule 7 keeps the
+# portfolio shares the backend computed from being recomputed by the model, so
+# the assistant can't disagree with the map.
 _SYSTEM_PROMPT = """\
 You are Rundown's portfolio data advisor. You explain what a user's own \
 data shows. You do not give financial advice. Follow these rules without \
@@ -159,6 +185,11 @@ to act. That would violate rule 1.
 short bullet lists when covering more than one point -- wherever it \
 makes an answer easier to scan. Formatting is a presentation choice; it \
 never substitutes for the citation and grounding rules above.
+
+7. The holdings context gives portfolio totals and each position's share of \
+portfolio value, total cost, and net unrealized gain, already computed. State \
+those figures as given. Do not compute your own shares or percentages from \
+them, and if a share isn't provided, say it isn't available.
 """
 
 # Lexical guard (Key Technical Decisions): catches known directive
@@ -180,6 +211,11 @@ _DIRECTIVE_PHRASE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     )
 )
 
+_PORTFOLIO_SOURCE = "SnapTrade positions"
+_NEWS_SOURCE = "Finnhub news"
+
+_MARKDOWN_EMPHASIS = re.compile(r"[*_`]")
+
 _SAFE_FALLBACK_MESSAGE = (
     "I can't share that response as phrased -- it read as a directive recommendation "
     "rather than an explanation of your data. Rundown's advisor explains what your data "
@@ -192,9 +228,12 @@ def contains_directive_language(text: str) -> bool:
     """`True` if `text` matches a known directive-advice phrase.
 
     A lexical check, not a semantic one -- see this module's docstring
-    for the documented gap that leaves open.
+    for the documented gap that leaves open. Markdown markers and line breaks
+    are removed first, so "you **should** sell" and a phrase split across two
+    lines can't slip past a pattern looking for "you should sell".
     """
-    return any(pattern.search(text) for pattern in _DIRECTIVE_PHRASE_PATTERNS)
+    plain = " ".join(_MARKDOWN_EMPHASIS.sub("", text).split())
+    return any(pattern.search(plain) for pattern in _DIRECTIVE_PHRASE_PATTERNS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +249,14 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
 
 
+def _reading(source: str, as_of: dt.datetime, is_stale: bool) -> SourceReading:
+    return SourceReading(source=source, as_of=as_of, status="stale" if is_stale else "used")
+
+
+def _unavailable(source: str) -> SourceReading:
+    return SourceReading(source=source, as_of=None, status="unavailable")
+
+
 @dataclass(frozen=True, slots=True)
 class _FilingAttachment:
     """A filing excerpt prepared for the request, with its scope described."""
@@ -217,6 +264,127 @@ class _FilingAttachment:
     document: DocumentBlockParam
     source_label: str
     provenance_note: str
+
+
+@dataclass(frozen=True, slots=True)
+class _AssembledContext:
+    """Everything an answer is grounded in, shared by both advisor endpoints."""
+
+    user_content: list[DocumentBlockParam | TextBlockParam]
+    readings: list[SourceReading]
+    scope_symbols: list[str]
+    filing_source_label: str | None
+
+
+class AnswerStream:
+    """An open Claude stream, turned into checked sentences by `events()`.
+
+    Already connected when created, so a Claude failure to connect surfaces as an
+    error before any response starts. `events()` owns the connection from there and
+    releases it however it ends, including when a client disconnect cancels it.
+    """
+
+    def __init__(
+        self,
+        manager: AsyncMessageStreamManager[Any],
+        stream: AsyncMessageStream[Any],
+        context: _AssembledContext,
+        held: list[HeldSymbol],
+    ) -> None:
+        self._manager = manager
+        self._stream = stream
+        self._context = context
+        self._held = held
+
+    async def events(self) -> AsyncIterator[AdvisorStreamEvent]:
+        try:
+            async for event in self._answer_events():
+                yield event
+        finally:
+            await self._manager.__aexit__(None, None, None)
+
+    async def _answer_events(self) -> AsyncIterator[AdvisorStreamEvent]:
+        yield ScopeEvent(symbols=self._context.scope_symbols)
+        for reading in self._context.readings:
+            yield ReadingEvent(**reading.model_dump())
+
+        sentences = _SentenceReleaser(self._held)
+        citations: list[Citation] = []
+        segmenter = SentenceSegmenter()
+
+        try:
+            async for event in self._stream:
+                if event.type == "citation":
+                    citation = _to_citation(event.citation, self._context.filing_source_label)
+                    if citation is not None:
+                        citations.append(citation)
+                elif event.type == "text":
+                    for sentence in segmenter.feed(event.text):
+                        released = sentences.release(sentence, citations)
+                        yield released
+                        if isinstance(released, RetractEvent):
+                            return
+                        citations = []
+            final_message = await self._stream.get_final_message()
+        except (APIError, httpx.HTTPError):
+            logger.warning("Advisor stream failed mid-answer.", exc_info=True)
+            yield InterruptedEvent(reason="unavailable", citations=citations)
+            return
+
+        if final_message.stop_reason == "refusal":
+            logger.warning("Advisor stream ended with a model refusal.")
+            yield InterruptedEvent(reason="declined", citations=citations)
+            return
+
+        for sentence in segmenter.flush():
+            released = sentences.release(sentence, citations)
+            yield released
+            if isinstance(released, RetractEvent):
+                return
+            citations = []
+
+        if not sentences.any_released:
+            # The streaming form of `chat()`'s empty-completion case.
+            yield InterruptedEvent(reason="unavailable", citations=citations)
+            return
+
+        sources = [r for r in self._context.readings if r.status != "unavailable"]
+        if final_message.stop_reason == "max_tokens":
+            yield IncompleteEvent(sources=sources, citations=citations)
+            return
+        yield DoneEvent(
+            sources=sources,
+            citations=citations,
+            follow_ups=suggested_follow_ups(sentences.focus, [h.symbol for h in self._held]),
+        )
+
+
+class _SentenceReleaser:
+    """Checks each sentence against the guard and works out what the map should show."""
+
+    def __init__(self, held: list[HeldSymbol]) -> None:
+        self._held = held
+        self._released: list[str] = []
+        self.focus: tuple[str, ...] = ()
+
+    @property
+    def any_released(self) -> bool:
+        return bool(self._released)
+
+    def release(self, sentence: str, citations: list[Citation]) -> SentenceEvent | RetractEvent:
+        # The accumulated check catches directive phrasing split across two sentences.
+        if contains_directive_language(" ".join([*self._released, sentence])):
+            logger.warning(
+                "Advisor response filtered: matched a forbidden directive-language pattern."
+            )
+            return RetractEvent(message=_SAFE_FALLBACK_MESSAGE)
+
+        hint = derive_map_hint(sentence, self._held, self.focus)
+        self.focus = hint.focus
+        self._released.append(sentence)
+        return SentenceEvent(
+            text=sentence, focus=list(hint.focus), sizing=hint.sizing, citations=citations
+        )
 
 
 class ClaudeService:
@@ -268,50 +436,19 @@ class ClaudeService:
             AdvisorUnavailableError: the Claude API call itself failed or
                 timed out.
         """
-        attachment = await self._build_filing_attachment(context_refs)
-
-        effective_symbols = context_refs.symbols
-        if not effective_symbols and context_refs.filing_ref is None:
-            effective_symbols = await self._match_symbols_in_question(question)
-
-        context_items: list[ContextItem] = []
-        portfolio_item = await self._build_portfolio_context(context_refs.symbols or None)
-        if portfolio_item is not None:
-            context_items.append(portfolio_item)
-        # Ahead of fundamentals and news deliberately: these are figures
-        # the company itself reported, each traceable to the filing that
-        # reported it, so they are the most authoritative numbers in the
-        # context and should be what the model reaches for first.
-        context_items.extend(
-            await self._build_facts_context(effective_symbols, context_refs.filing_ref)
-        )
-        if effective_symbols:
-            context_items.extend(await self._build_fundamentals_context(effective_symbols))
-            news_item = await self._build_news_context(effective_symbols)
-            if news_item is not None:
-                context_items.append(news_item)
-
-        if not context_items and attachment is None:
-            raise InsufficientContextError(
-                "No context is available for this question -- connect a brokerage "
-                "account, specify symbols, or reference a specific filing."
-            )
-
-        user_content = _build_user_content(context_items, attachment, question)
+        context = await self._assemble_context(question, context_refs)
 
         try:
             response = await self._client.messages.create(
                 model=self._model_id,
                 max_tokens=_MAX_TOKENS,
                 system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_content}],
+                messages=[{"role": "user", "content": context.user_content}],
             )
         except APIError as exc:
             raise AdvisorUnavailableError(exc) from exc
 
-        answer, citations = _extract_answer_and_citations(
-            response, attachment.source_label if attachment is not None else None
-        )
+        answer, citations = _extract_answer_and_citations(response, context.filing_source_label)
 
         if not answer.strip():
             # Observed in practice: Claude occasionally returns a response
@@ -332,6 +469,99 @@ class ClaudeService:
             return ChatResponse(answer=_SAFE_FALLBACK_MESSAGE, citations=[])
 
         return ChatResponse(answer=answer, citations=citations)
+
+    async def open_answer_stream(self, question: str, context_refs: ContextRefs) -> AnswerStream:
+        """Connect to Claude for `question`, grounded the same way as `chat()`.
+
+        Raises:
+            InsufficientContextError: no context is available at all.
+            AdvisorUnavailableError: Claude couldn't be reached.
+        """
+        context = await self._assemble_context(question, context_refs)
+        held = await self._load_held()
+        scope_symbols = context.scope_symbols or [entry.symbol for entry in held]
+
+        manager = self._client.messages.stream(
+            model=self._model_id,
+            max_tokens=_MAX_TOKENS,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": context.user_content}],
+        )
+        try:
+            stream = await manager.__aenter__()
+        except APIError as exc:
+            raise AdvisorUnavailableError(exc) from exc
+
+        return AnswerStream(
+            manager,
+            stream,
+            _AssembledContext(
+                user_content=context.user_content,
+                readings=context.readings,
+                scope_symbols=scope_symbols,
+                filing_source_label=context.filing_source_label,
+            ),
+            held,
+        )
+
+    async def _assemble_context(
+        self, question: str, context_refs: ContextRefs
+    ) -> _AssembledContext:
+        """Gather what an answer may draw on, recording each source that was read.
+
+        The one assembly path for both endpoints, so what they're grounded in
+        can't drift. See `chat()` for how `effective_symbols` is chosen.
+
+        Raises:
+            InsufficientContextError: no context is available at all.
+            AdvisorUnavailableError: the referenced filing couldn't be fetched.
+        """
+        readings: list[SourceReading] = []
+        attachment = await self._build_filing_attachment(context_refs)
+        if attachment is not None:
+            readings.append(
+                SourceReading(source=attachment.source_label, as_of=_utcnow(), status="used")
+            )
+
+        effective_symbols = context_refs.symbols
+        if not effective_symbols and context_refs.filing_ref is None:
+            effective_symbols = await self._match_symbols_in_question(question)
+
+        context_items: list[ContextItem] = []
+        portfolio_item = await self._build_portfolio_context(context_refs.symbols or None, readings)
+        if portfolio_item is not None:
+            context_items.append(portfolio_item)
+        # Ahead of fundamentals and news deliberately: these are figures
+        # the company itself reported, each traceable to the filing that
+        # reported it, so they are the most authoritative numbers in the
+        # context and should be what the model reaches for first.
+        context_items.extend(
+            await self._build_facts_context(effective_symbols, context_refs.filing_ref, readings)
+        )
+        if effective_symbols:
+            context_items.extend(
+                await self._build_fundamentals_context(effective_symbols, readings)
+            )
+            news_item = await self._build_news_context(effective_symbols, readings)
+            if news_item is not None:
+                context_items.append(news_item)
+
+        if not context_items and attachment is None:
+            raise InsufficientContextError(
+                "No context is available for this question -- connect a brokerage "
+                "account, specify symbols, or reference a specific filing."
+            )
+
+        scope_symbols = list(effective_symbols)
+        if context_refs.filing_ref is not None and not scope_symbols:
+            scope_symbols = [context_refs.filing_ref.symbol]
+
+        return _AssembledContext(
+            user_content=_build_user_content(context_items, attachment, question),
+            readings=readings,
+            scope_symbols=scope_symbols,
+            filing_source_label=attachment.source_label if attachment is not None else None,
+        )
 
     async def _build_filing_attachment(self, context_refs: ContextRefs) -> _FilingAttachment | None:
         """Attach the portfolio-relevant sections of the referenced filing.
@@ -395,82 +625,100 @@ class ClaudeService:
             provenance_note=filing_document.provenance_note(),
         )
 
-    async def _build_portfolio_context(self, symbols: list[str] | None) -> ContextItem | None:
-        """Current holdings, with allocation/concentration/P&L already computed by U2.
+    async def _build_portfolio_context(
+        self, symbols: list[str] | None, readings: list[SourceReading]
+    ) -> ContextItem | None:
+        """Portfolio totals and holdings, with every figure already computed in `app.domain`.
 
-        `SnapTradeService.list_positions` already calls U2's
-        `compute_allocation`/`compute_pnl` internally, so those numbers
-        can never drift from what `/portfolio/positions` itself shows.
-        `flag_concentrated` is called directly here, since concentration
-        flagging isn't part of `PositionView` -- this is the one U2
-        function the advisor's context assembly invokes on its own.
+        Built on `SnapTradeService.get_rollup`, the same rollup the map draws, so
+        the advisor can't disagree with it. Shares and totals are always of the
+        whole portfolio: `symbols` narrows which holdings are listed, not what
+        they're a share of. `flag_concentrated` is called directly here, since
+        concentration flagging isn't part of the rollup.
         """
         try:
-            result = await self._snaptrade_service.list_positions()
+            result = await self._snaptrade_service.get_rollup()
         except ProviderUnavailableError:
+            readings.append(_unavailable(_PORTFOLIO_SOURCE))
             return None
 
-        views = result.value
+        rollup = result.value
+        rows = rollup.positions
         if symbols:
             wanted = {symbol.upper() for symbol in symbols}
-            views = [view for view in views if view.symbol.upper() in wanted]
-        if not views:
+            rows = [row for row in rows if row.symbol.upper() in wanted]
+        if not rows:
             return None
 
         allocations = [
-            Allocation(symbol=view.symbol, percent=view.allocation_pct) for view in views
+            Allocation(symbol=row.symbol, percent=row.share_of_value_pct) for row in rows
         ]
         concentrated_symbols = {
             a.symbol for a in flag_concentrated(allocations, _CONCENTRATION_THRESHOLD_PCT)
         }
 
-        lines = ["Current holdings:"]
-        for view in views:
-            pnl_pct = (
-                f"{view.unrealized_pnl_percent:.1f}%"
-                if view.unrealized_pnl_percent is not None
-                else "n/a"
+        lines = [
+            f"Portfolio totals (all positions): market value ${rollup.total_market_value:.2f}, "
+            f"cost basis ${rollup.total_cost_basis:.2f}, "
+            f"net unrealized gain ${rollup.net_gain_dollars:.2f}.",
+            "Current holdings:",
+        ]
+        for row in rows:
+            pnl_pct = f"{row.gain_percent:.1f}%" if row.gain_percent is not None else "n/a"
+            cost_share = (
+                f", {row.share_of_cost_pct:.1f}% of total cost"
+                if row.share_of_cost_pct is not None
+                else ""
             )
-            flag = " [over 20% of portfolio]" if view.symbol in concentrated_symbols else ""
-            pnl_dollars = view.unrealized_pnl_dollars
+            gain_share = (
+                f", {row.share_of_net_gain_pct:.1f}% of net unrealized gain"
+                if row.share_of_net_gain_pct is not None
+                else ""
+            )
+            flag = " [over 20% of portfolio]" if row.symbol in concentrated_symbols else ""
             lines.append(
-                f"- {view.symbol}: {view.quantity} shares, market value ${view.market_value}, "
-                f"{view.allocation_pct:.1f}% of portfolio, unrealized P&L ${pnl_dollars} "
-                f"({pnl_pct}){flag}"
+                f"- {row.symbol}: {row.quantity} shares, market value ${row.market_value:.2f}, "
+                f"cost basis ${row.cost_basis:.2f}, "
+                f"{row.share_of_value_pct:.1f}% of portfolio{cost_share}, "
+                f"unrealized P&L ${row.gain_dollars:.2f} ({pnl_pct}){gain_share}{flag}"
             )
 
-        return ContextItem(source="SnapTrade positions", as_of=result.as_of, text="\n".join(lines))
+        readings.append(_reading(_PORTFOLIO_SOURCE, result.as_of, result.is_stale))
+        return ContextItem(source=_PORTFOLIO_SOURCE, as_of=result.as_of, text="\n".join(lines))
 
     async def _match_symbols_in_question(self, question: str) -> list[str]:
         """Which held symbols (by ticker or company name) `question` mentions.
 
-        Only called from `chat()` when the caller supplied no explicit
-        symbols and no filing reference. Fails gracefully to no matches
-        rather than raising, mirroring `_build_portfolio_context`'s
-        handling of an unavailable brokerage connection -- a general
-        question with nothing to match against should still fall back to
-        today's holdings-only behavior, not error out.
+        Only called when the caller supplied no explicit symbols and no filing
+        reference.
+        """
+        return match_held_symbols(question, await self._load_held())
+
+    async def _load_held(self) -> list[HeldSymbol]:
+        """Every held symbol, largest first, with its company name where known.
+
+        Fails gracefully to nothing held rather than raising, mirroring
+        `_build_portfolio_context`'s handling of an unavailable brokerage
+        connection -- a general question with nothing to match against should
+        still fall back to today's holdings-only behavior, not error out.
         """
         try:
-            result = await self._snaptrade_service.list_positions()
+            result = await self._snaptrade_service.get_rollup()
         except ProviderUnavailableError:
             return []
 
-        views = result.value
-        if not views:
+        rows = result.value.positions
+        if not rows:
             return []
 
         try:
-            names = await self._edgar_service.resolve_company_names([view.symbol for view in views])
+            names = await self._edgar_service.resolve_company_names([row.symbol for row in rows])
         except ProviderUnavailableError:
             names = {}
-        held = [
-            HeldSymbol(symbol=view.symbol, company_name=names.get(view.symbol)) for view in views
-        ]
-        return match_held_symbols(question, held)
+        return [HeldSymbol(symbol=row.symbol, company_name=names.get(row.symbol)) for row in rows]
 
     async def _build_facts_context(
-        self, symbols: list[str], filing_ref: FilingRef | None
+        self, symbols: list[str], filing_ref: FilingRef | None, readings: list[SourceReading]
     ) -> list[ContextItem]:
         """SEC XBRL facts for every symbol in scope, newest period first.
 
@@ -496,11 +744,15 @@ class ClaudeService:
                 if filing_ref is not None and filing_ref.symbol.upper() == symbol
                 else None
             )
+            source = f"SEC XBRL facts ({symbol})"
             try:
                 result = await self._xbrl_service.get_facts(
                     symbol, referenced_accession=referenced_accession
                 )
-            except (ProviderUnavailableError, ProviderNotFoundError):
+            except ProviderNotFoundError:
+                continue
+            except ProviderUnavailableError:
+                readings.append(_unavailable(source))
                 continue
 
             # An all-absent snapshot would be a block of context saying
@@ -510,21 +762,27 @@ class ClaudeService:
             if not result.value.facts:
                 continue
 
+            readings.append(_reading(source, result.as_of, result.is_stale))
             items.append(
                 ContextItem(
-                    source=f"SEC XBRL facts ({symbol})",
+                    source=source,
                     as_of=result.as_of,
                     text=_render_xbrl_facts(result.value, result.as_of),
                 )
             )
         return items
 
-    async def _build_fundamentals_context(self, symbols: list[str]) -> list[ContextItem]:
+    async def _build_fundamentals_context(
+        self, symbols: list[str], readings: list[SourceReading]
+    ) -> list[ContextItem]:
         items: list[ContextItem] = []
         for symbol in symbols:
             try:
                 result = await self._fmp_service.get_fundamentals(symbol)
-            except (ProviderUnavailableError, ProviderNotFoundError):
+            except ProviderNotFoundError:
+                continue
+            except ProviderUnavailableError:
+                readings.append(_unavailable(f"FMP fundamentals ({symbol})"))
                 continue
 
             fields = result.value.model_dump(exclude={"symbol"}, exclude_none=True)
@@ -532,19 +790,24 @@ class ClaudeService:
                 continue
             lines = [f"Fundamentals for {result.value.symbol}:"]
             lines.extend(f"- {name}: {value}" for name, value in fields.items())
+            source = f"FMP fundamentals ({result.value.symbol})"
+            readings.append(_reading(source, result.as_of, result.is_stale))
             items.append(
                 ContextItem(
-                    source=f"FMP fundamentals ({result.value.symbol})",
+                    source=source,
                     as_of=result.as_of,
                     text="\n".join(lines),
                 )
             )
         return items
 
-    async def _build_news_context(self, symbols: list[str]) -> ContextItem | None:
+    async def _build_news_context(
+        self, symbols: list[str], readings: list[SourceReading]
+    ) -> ContextItem | None:
         try:
             result = await self._finnhub_service.get_news_for_symbols(symbols)
         except ProviderUnavailableError:
+            readings.append(_unavailable(_NEWS_SOURCE))
             return None
         if not result.value:
             return None
@@ -560,7 +823,8 @@ class ClaudeService:
                 f"({item.publisher}): {item.headline} -- {item.summary}"
             )
 
-        return ContextItem(source="Finnhub news", as_of=result.as_of, text="\n".join(lines))
+        readings.append(_reading(_NEWS_SOURCE, result.as_of, result.is_stale))
+        return ContextItem(source=_NEWS_SOURCE, as_of=result.as_of, text="\n".join(lines))
 
 
 def _render_xbrl_facts(snapshot: XbrlFacts, as_of: dt.datetime) -> str:
@@ -643,21 +907,26 @@ def _extract_answer_and_citations(
     """
     answer_parts: list[str] = []
     citations: list[Citation] = []
-    now = _utcnow()
 
     for block in response.content:
         if getattr(block, "type", None) != "text":
             continue
         answer_parts.append(block.text)
-        for citation in getattr(block, "citations", None) or []:
-            cited_text = getattr(citation, "cited_text", None)
-            if cited_text:
-                citations.append(
-                    Citation(
-                        source=filing_source_label or "Claude citation",
-                        quote=cited_text,
-                        as_of=now,
-                    )
-                )
+        for raw_citation in getattr(block, "citations", None) or []:
+            citation = _to_citation(raw_citation, filing_source_label)
+            if citation is not None:
+                citations.append(citation)
 
     return "".join(answer_parts), citations
+
+
+def _to_citation(
+    raw_citation: Any,  # noqa: ANN401 -- the SDK's citation union; every member has `cited_text`
+    filing_source_label: str | None,
+) -> Citation | None:
+    cited_text = getattr(raw_citation, "cited_text", None)
+    if not cited_text:
+        return None
+    return Citation(
+        source=filing_source_label or "Claude citation", quote=cited_text, as_of=_utcnow()
+    )
