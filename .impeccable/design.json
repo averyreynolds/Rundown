@@ -87,25 +87,86 @@
         "displayName": "Border Strong",
         "canonical": "#d4d3ce",
         "tonalRamp": ["#78766e", "#948f87", "#aeaba1", "#c1beb6", "#d4d3ce", "#e0dfdb", "#eceae7", "#f6f5f3"]
+      },
+      "map-dimmed": {
+        "role": "neutral",
+        "displayName": "Map Dimmed",
+        "canonical": "#f1f2f4"
       }
     },
     "typographyMeta": {
-      "display": { "displayName": "Display", "purpose": "Total portfolio value only — the single largest figure per view." },
-      "title": { "displayName": "Title", "purpose": "Page wordmark and state headings." },
-      "body": { "displayName": "Body", "purpose": "Default working size: row text, chat messages, descriptive copy." },
-      "label": { "displayName": "Label", "purpose": "Chips, section eyebrows, source/as-of lines, detail labels." },
-      "mono": { "displayName": "Mono", "purpose": "Filing accession numbers and citation source strings only." }
+      "display": {
+        "displayName": "Display",
+        "purpose": "The opening question on the home screen, at most once per view."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The headline of an answer or rundown."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Page wordmark."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Answer sentences and the composer."
+      },
+      "body-small": {
+        "displayName": "Body Small",
+        "purpose": "Holdings rows, detail panel text, suggested questions."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Chips, section eyebrows, legend, sizing notes."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Reading steps, source and as-of lines, scope line, tile figures."
+      }
     },
     "shadows": [
-      { "name": "overlay-trigger", "value": "0 10px 15px -3px rgba(20,22,26,0.10)", "purpose": "The advisor's floating action button — the only in-flow element allowed a shadow, because it visually floats above the page." },
-      { "name": "overlay-drawer", "value": "0 20px 25px -5px rgba(0,0,0,0.10), 0 8px 10px -6px rgba(0,0,0,0.10)", "purpose": "The advisor's slide-in drawer panel." }
+      {
+        "name": "overlay-panel",
+        "value": "0 20px 25px -5px rgba(0,0,0,0.10), 0 8px 10px -6px rgba(0,0,0,0.10)",
+        "purpose": "HoldingDetailPanel when it overlays the map pane."
+      }
     ],
     "motion": [
-      { "name": "color-transition", "value": "transition-colors (Tailwind default, ~150ms ease)", "purpose": "Hover states on buttons, links, and bordered interactive cards." },
-      { "name": "trigger-lift", "value": "transform: translateY(-2px) on hover", "purpose": "The advisor's floating trigger lifts slightly on hover." }
+      {
+        "name": "color-transition",
+        "value": "transition-colors (Tailwind default, ~150ms ease)",
+        "purpose": "Hover states on buttons, links, and bordered interactive cards."
+      },
+      {
+        "name": "tile-resize",
+        "value": "800ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Tiles change size when the sizing mode changes."
+      },
+      {
+        "name": "tile-focus",
+        "value": "160-220ms ease",
+        "purpose": "Focus and dimming as sentences arrive or the pointer moves."
+      },
+      {
+        "name": "reading-pulse",
+        "value": "1000ms opacity to 0.5, staggered 70ms per tile",
+        "purpose": "In-scope tiles while Rundown reads."
+      },
+      {
+        "name": "answer-rise",
+        "value": "360ms, 6px rise and fade",
+        "purpose": "Answer headline, once per answer."
+      }
     ],
     "breakpoints": [
-      { "name": "sm", "value": "640px" }
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "two-pane",
+        "value": "901px"
+      }
     ]
   },
   "components": [
@@ -158,14 +219,6 @@
       "css": ".ds-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 16px 4px; border-bottom: 1px solid #e6e5e1; background: none; border-left: none; border-right: none; border-top: none; text-align: left; transition: background-color 0.15s ease; } .ds-row:hover { background: rgba(247,247,245,0.6); } .ds-row-avatar { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 9999px; background: #f7f7f5; color: #5b6068; font-size: 0.75rem; font-weight: 600; flex-shrink: 0; } .ds-row-name strong { display: block; font-size: 0.875rem; font-weight: 500; color: #14161a; } .ds-row-name small { display: block; font-size: 0.75rem; color: #6b7280; } .ds-row-value { margin-left: auto; text-align: right; font-variant-numeric: tabular-nums; font-size: 0.875rem; font-weight: 500; color: #14161a; } .ds-row-value small { display: block; font-size: 0.75rem; font-weight: 400; color: #6b7280; }"
     },
     {
-      "name": "Advisor Trigger",
-      "kind": "custom",
-      "refersTo": null,
-      "description": "Floating action button opening the advisor drawer — the one shadowed in-flow element.",
-      "html": "<button class=\"ds-fab\" aria-label=\"Ask about your portfolio\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\"><path d=\"M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v5A1.5 1.5 0 0 1 12.5 11H8l-3 2.5V11H3.5A1.5 1.5 0 0 1 2 9.5v-5Z\" stroke=\"currentColor\" stroke-width=\"1.3\" stroke-linejoin=\"round\"/></svg><span>Ask about your portfolio</span></button>",
-      "css": ".ds-fab { display: inline-flex; align-items: center; gap: 8px; background: #14161a; color: #ffffff; border: none; border-radius: 9999px; padding: 12px 16px; box-shadow: 0 10px 15px -3px rgba(20,22,26,0.10); transition: transform 0.15s ease; } .ds-fab:hover { transform: translateY(-2px); } .ds-fab:focus-visible { outline: 2px solid #3654d6; outline-offset: 2px; }"
-    },
-    {
       "name": "Provenance Line",
       "kind": "custom",
       "refersTo": null,
@@ -176,19 +229,45 @@
   ],
   "narrative": {
     "northStar": null,
-    "overview": "Rundown is the category standard, executed at full commitment: a consumer-fintech portfolio dashboard in the register of Robinhood, Copilot Money, and Wealthfront, deliberately chosen over two invented visual worlds (a newsroom rundown sheet, an airport split-flap board) during the direction pass recorded in PRODUCT.md. There is no named metaphor here by design — the brief was to play the convention straight, not to smuggle a quirk into it. The system reads as calm, trustworthy, and slightly clinical: neutral paper-and-ink surfaces, one restrained accent, confident tabular numerals, and generous card padding, closer to a well-made banking app than to a trading terminal. Gain/loss color is allowed only as a factual description of change since cost, under The Gain/Loss Color Rule; CLAUDE.md hard rule 1 still applies in full to what the assistant and UI say. Rundown is light-mode only for now, chosen from the use-scene stated in the surface brief.",
+    "overview": "Rundown is an assistant beside a living map of your portfolio: a conversation panel next to a full-height map that reacts to what you type and to each sentence of an answer. The visual register is the category standard, executed at full commitment, in the manner of Robinhood, Copilot Money, and Wealthfront, deliberately chosen over two invented visual worlds during the direction pass recorded in PRODUCT.md. The system reads as calm, trustworthy, and slightly clinical: neutral surfaces, ink for primary actions, one restrained accent, and confident tabular numerals. Gain/loss color is allowed only as a factual description of change since cost, under The Gain/Loss Color Rule; CLAUDE.md hard rule 1 still applies in full to what the assistant and UI say. Rundown is light-mode only, chosen from the use-scene stated in the surface brief and reconfirmed for the Living Map.",
     "keyCharacteristics": [
-      "Neutral paper/ink palette with a single blue-indigo accent, used sparingly (links, the advisor's brand touches, one chip tone)",
+      "Neutral paper/ink palette with a single blue-indigo accent, used sparingly (links, focus on inputs, one chip tone)",
       "A second, structurally separate status-color pair (amber for stale, red for error) reserved exclusively for data freshness — never repurposed for gain/loss",
-      "Flat, bordered cards at rest; shadow appears only on floating/overlay elements (the advisor drawer and its trigger)",
+      "Flat surfaces at rest; shadow appears only on overlay elements",
       "Tabular numerals everywhere a number appears in a column or is compared across rows",
       "Every provider-sourced data point carries a source · as of [timestamp] line, rendered in the same faint, low-emphasis type"
     ],
     "rules": [
-      { "name": "The Gain/Loss Color Rule", "body": "Color may show gain/loss only as change since cost on a fixed scale with a legend. Use teal and vermilion fills, not green and red. Figures stay ink with a sign and ▲/▼ glyph. Focus and flags use an ink outline, never a gain/loss color. Copy never uses color as an argument, and CLAUDE.md hard rule 1 still forbids anything directive.", "section": "colors" },
-      { "name": "The Separate-Roles Rule", "body": "The accent (#3654d6 family), the status pair (amber/red), and the gain/loss scale never cross roles. Accent means brand/interactive/flagged-for-attention; status means how much to trust this data right now; gain/loss means change since cost.", "section": "colors" },
-      { "name": "The Tabular Numerals Rule", "body": "Any number a user might scan down a column or compare across rows renders with tabular-nums. No numeric column may use proportional figures.", "section": "typography" },
-      { "name": "The Flat-At-Rest Rule", "body": "Surfaces embedded in page flow never carry a shadow. Shadow only appears on elements that overlay the page (modals, drawers, floating triggers).", "section": "elevation" }
+      {
+        "name": "The Gain/Loss Color Rule",
+        "body": "Color may show gain/loss only as change since cost on a fixed scale with a legend. Use teal and vermilion fills, not green and red. Figures stay ink with a sign and ▲/▼ glyph. Focus and flags use an ink outline, never a gain/loss color. Copy never uses color as an argument, and CLAUDE.md hard rule 1 still forbids anything directive.",
+        "section": "colors"
+      },
+      {
+        "name": "The Separate-Roles Rule",
+        "body": "The accent (#3654d6 family), the status pair (amber/red), and the gain/loss scale never cross roles. Accent means brand/interactive/flagged-for-attention; status means how much to trust this data right now; gain/loss means change since cost.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Numerals Rule",
+        "body": "Any number a user might scan down a column or compare across rows renders with tabular-nums. No numeric column may use proportional figures.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-At-Rest Rule",
+        "body": "Surfaces embedded in page flow never carry a shadow. Shadow only appears on elements that overlay the page (modals, overlaid panels).",
+        "section": "elevation"
+      },
+      {
+        "name": "The Motion-Follows-Meaning Rule",
+        "body": "Every animation must correspond to a change in what the assistant is doing or what the map is showing. No entrance animation, count-ups, or staggered reveals. Reduced motion removes all of it.",
+        "section": "motion"
+      },
+      {
+        "name": "The Answer-Owns-Sizing-Until-You-Touch-It Rule",
+        "body": "An answer may change the sizing mode as its sentences arrive, and the map says so. If the user changes sizing during an answer, the answer stops changing it for that turn.",
+        "section": "motion"
+      }
     ],
     "dos": [
       "Do keep gain/loss figures in ink with a sign and a ▲/▼ glyph, and put any color behind them as a fill with a legend on screen.",
@@ -196,7 +275,8 @@
       "Do attach a {source} · as of {timestamp} line to any value fetched from a provider, using formatAsOf for timestamped values.",
       "Do format date-only values (no time-of-day component, e.g. a filing date) with formatDate's explicit timeZone: \"UTC\" — a bare YYYY-MM-DD string parses as UTC midnight, and formatting it in the viewer's local zone can roll it back a day west of UTC. Don't remove the timeZone: \"UTC\" option.",
       "Do use the paper/surface tonal step (not a border) to distinguish content nested inside a card.",
-      "Do keep shadows reserved for overlay elements (drawer, floating trigger) and flat borders for everything in normal page flow."
+      "Do keep shadows reserved for overlay elements and flat borders for everything in normal page flow.",
+      "Do give every position its own tile at no less than 76x44px, and let the tile area scroll when they don't all fit."
     ],
     "donts": [
       "Don't use gain/loss color for anything beyond the fact it encodes, or use color to signal urgency, approval, or what to do next. Directive advice remains a legal boundary (Investment Advisers Act, CLAUDE.md hard rule 1).",
@@ -204,7 +284,8 @@
       "Don't reuse the status-color pair (amber/red) for anything other than data freshness or fetch errors. It must never double as a gain/loss or sentiment color.",
       "Don't ship a data point without a source and as-of timestamp, even in a compact or secondary UI placement.",
       "Don't introduce a second accent hue. The system's Restrained color strategy means one accent, used sparingly.",
-      "Don't design new screens against dark mode yet; the system is light-mode only by a deliberate use-scene decision, not an oversight."
+      "Don't design new screens against dark mode yet; the system is light-mode only by a deliberate use-scene decision, not an oversight.",
+      "Don't let an answer's model output choose what the map shows. Focus and sizing are derived by the backend from released sentences, from a closed set of held symbols and sizing modes."
     ]
   }
 }

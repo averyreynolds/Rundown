@@ -1,6 +1,6 @@
 ---
 name: Rundown
-description: A portfolio dashboard that answers "does this matter?" — consumer-fintech calm, played straight, no invented world.
+description: An assistant beside a living map of your portfolio that answers "does this matter?" — consumer-fintech calm, played straight, no invented world.
 colors:
   paper: "#f7f7f5"
   surface: "#ffffff"
@@ -23,35 +23,47 @@ colors:
   loss-2: "#f7b59d"
   loss-3: "#ee8259"
   gain-loss-flat: "#e8eaee"
+  map-dimmed: "#f1f2f4"
 typography:
   display:
-    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "3rem"
-    fontSizeLarge: "3.75rem"
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "2.5rem"
     fontWeight: 600
-    lineHeight: "1"
+    lineHeight: "1.06"
     letterSpacing: "-0.03em"
-  title:
-    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.125rem"
+  headline:
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.75rem"
     fontWeight: 600
+    lineHeight: "1.12"
+    letterSpacing: "-0.025em"
+  title:
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.25rem"
+    fontWeight: 700
     lineHeight: "1.2"
-    letterSpacing: "-0.01em"
+    letterSpacing: "-0.02em"
   body:
-    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 400
+    lineHeight: "1.45"
+  body-small:
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.875rem"
     fontWeight: 400
     lineHeight: "1.5"
   label:
-    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.75rem"
     fontWeight: 500
     lineHeight: "1.3"
   mono:
-    fontFamily: "Geist Mono, ui-monospace, monospace"
+    fontFamily: "JetBrains Mono, ui-monospace, monospace"
     fontSize: "0.75rem"
     fontWeight: 400
 rounded:
+  xs: "6px"
   sm: "8px"
   md: "16px"
   full: "9999px"
@@ -62,6 +74,11 @@ spacing:
   lg: "24px"
   xl: "32px"
 components:
+  map-tile:
+    rounded: "{rounded.xs}"
+    padding: "8px 10px"
+    minWidth: "76px"
+    minHeight: "44px"
   card-surface:
     backgroundColor: "{colors.surface}"
     rounded: "{rounded.md}"
@@ -105,18 +122,20 @@ components:
 
 ## Overview
 
-Rundown is the category standard, executed at full commitment: a consumer-fintech portfolio dashboard in the register of Robinhood, Copilot Money, and Wealthfront, deliberately chosen over two invented visual worlds (a newsroom rundown sheet, an airport split-flap board) during the direction pass recorded in `PRODUCT.md`. There is no named metaphor here by design — the brief was to play the convention straight, not to smuggle a quirk into it. The system reads as calm, trustworthy, and slightly clinical: neutral paper-and-ink surfaces, one restrained accent, confident tabular numerals, and generous card padding, closer to a well-made banking app than to a trading terminal.
+Rundown is an assistant beside a living map of your portfolio. A conversation panel sits next to a full-height map, and the map reacts to what you type and to each sentence of an answer. The assistant is the product; holdings, fundamentals, filings, and news are its evidence.
+
+The visual register is still the category standard, executed at full commitment: consumer fintech in the manner of Robinhood, Copilot Money, and Wealthfront, deliberately chosen over two invented visual worlds (a newsroom rundown sheet, an airport split-flap board) during the direction pass recorded in `PRODUCT.md`. There is no named metaphor. The system reads as calm, trustworthy, and slightly clinical: neutral surfaces, ink for primary actions, one restrained accent, and confident tabular numerals, closer to a well-made banking app than to a trading terminal.
 
 Gain/loss color is allowed, within limits. This system used to ban it, reading CLAUDE.md hard rule 1 to mean that any colored P&L figure was an implicit buy/sell signal. Avery overturned that reading on 2026-11-02 for the assistant-first Living Map direction: a color showing a past, factual change is not by itself a directive. Hard rule 1 still applies in full to what the assistant and the UI say, and The Gain/Loss Color Rule below is what keeps color descriptive. This was a product decision, not a legal review, so revisit it before Rundown goes beyond personal use.
 
-The rule leads the code for now. `components/PnlValue.tsx` still renders neutral ink, and the gain/loss tokens above are not yet in `globals.css`.
+This document leads the code for now. The Living Map isn't built yet, so the layout, motion, and component sections below describe the target, and the current dashboard, drawer, and summary card remain in the app until the overhaul replaces them.
 
-Rundown is light-mode only for now. This was chosen from the use-scene stated in the surface brief — checked on a laptop at a desk in normal daylight — not defaulted to because dark mode wasn't built yet. Dark mode is a reasonable follow-on, not a gap.
+Rundown is light-mode only. This was chosen from the use-scene stated in the surface brief — checked on a laptop at a desk in normal daylight — and reconfirmed for the Living Map on 2026-11-02, since the gain/loss scale is only defined and tested on light surfaces. Dark mode is a reasonable follow-on, not a gap.
 
 **Key Characteristics:**
-- Neutral paper/ink palette with a single blue-indigo accent, used sparingly (links, the advisor's brand touches, one chip tone)
+- Neutral paper/ink palette with a single blue-indigo accent, used sparingly (links, focus on inputs, one chip tone)
 - A second, structurally separate status-color pair (amber for stale, red for error) reserved exclusively for data freshness — never repurposed for gain/loss
-- Flat, bordered cards at rest; shadow appears only on floating/overlay elements (the advisor drawer and its trigger)
+- Flat surfaces at rest; shadow appears only on overlay elements (the holding detail panel on smaller screens)
 - Tabular numerals everywhere a number appears in a column or is compared across rows
 - Every provider-sourced data point carries a `source · as of [timestamp]` line, rendered in the same faint, low-emphasis type
 
@@ -125,7 +144,7 @@ Rundown is light-mode only for now. This was chosen from the use-scene stated in
 The palette is restrained: warm-neutral paper and ink carry almost the entire surface, one blue-indigo accent marks interactivity and brand presence, and a wholly separate amber/red pair exists only to flag data trustworthiness.
 
 ### Primary
-- **Rundown Blue** (`#3654d6`): the single accent. Used for the allocation bar's fill, the advisor's user-message bubble and submit button, focus rings on inputs, and the "worth a look" flag chip (via its soft tint). Appears on a small fraction of any given screen.
+- **Rundown Blue** (`#3654d6`): the single accent. Used for focus on inputs and the "worth a look" flag chip (via its soft tint). Appears on a small fraction of any given screen. Primary actions, including Ask, are ink.
 - **Rundown Blue, Deep** (`#2743b3`): hover/pressed state for accent buttons, and the color of inline text links ("Ask about this position →").
 - **Rundown Blue, Soft** (`#eef1fc`): tint background for the accent-toned "flag" chip only — never a full-bleed surface color.
 
@@ -142,12 +161,13 @@ A diverging scale used only as a fill behind ink text, to show change since cost
 
 ### Neutral
 - **Paper** (`#f7f7f5`): the page background, and the background of nested detail cards (fundamentals/news/filing panels) sitting inside a surface card — a tonal step down, not a border, to distinguish nesting.
-- **Surface** (`#ffffff`): card backgrounds (summary card, holdings list, advisor drawer).
-- **Ink** (`#14161a`): primary text, and the fill color for high-emphasis buttons (Connect your brokerage, Try again, the advisor's floating trigger).
+- **Surface** (`#ffffff`): the map pane, the composer, and card backgrounds.
+- **Ink** (`#14161a`): primary text, the fill color for primary actions (Ask, Get today's rundown, Connect your brokerage, Try again), and the focus outline on map tiles.
 - **Ink Secondary** (`#5b6068`): secondary text — labels above figures, percent-in-parens on P&L, section subheads.
 - **Ink Faint** (`#6b7280`): the lowest-emphasis text tier — timestamps, source lines, row metadata, placeholder text.
 - **Border** (`#e6e5e1`): default 1px card and divider borders.
-- **Border Strong** (`#d4d3ce`): hover state for bordered elements, and the "Other" segment of the allocation bar.
+- **Border Strong** (`#d4d3ce`): hover state for bordered elements.
+- **Map Dimmed** (`#f1f2f4`): tiles outside the current focus, with `ink-secondary` text. This removes their gain/loss fill while another tile is focused, so dimming never reads as a change in value.
 
 ### Named Rules
 **The Gain/Loss Color Rule.** Color may show gain/loss only as a description of what already happened:
@@ -161,51 +181,79 @@ A diverging scale used only as a fill behind ink text, to show change since cost
 
 ## Typography
 
-**Display/Body/Label Font:** Geist (via `next/font/google`), falling back to `ui-sans-serif, system-ui, sans-serif`.
-**Mono Font:** Geist Mono — used narrowly, for filing accession numbers and citation source strings in the advisor panel.
+**Sans Font:** Schibsted Grotesk (via `next/font/google`), falling back to `ui-sans-serif, system-ui, sans-serif`.
+**Mono Font:** JetBrains Mono, used for what Rundown read and where it came from: reading steps, source lines, the composer's scope line, and map labels. It marks provenance and figures, never prose.
 
-**Character:** A single workhorse system-sans family used at a narrow, disciplined weight range (400/500/600). No display serif, no editorial voice — the type itself is meant to disappear behind the numbers.
+**Character:** One grotesque family at a disciplined weight range (400/500/600/700), with mono as the data voice. No display serif and no editorial voice. The answer's words lead, and the type stays out of the way of the numbers.
 
 ### Hierarchy
-- **Display** (600, 3rem/48px scaling to 3.75rem/60px at `sm:`, leading-none, −0.03em tracking, tabular-nums): the single largest figure on the page — total portfolio value. Used exactly once per view, and animates in once via `AnimatedCurrency` (see Motion below) rather than rendering statically.
-- **Title** (600, 1.25rem/20px, tight tracking): the page wordmark ("Rundown") in `PageHeader`; also 500-weight 1rem for state headings (empty/error/loading captions).
-- **Body** (400–500, 0.875rem/14px, 1.5 leading): row text, chat messages, descriptive copy — the working size for nearly everything. Holdings-row ticker symbols and the "Holdings" section label step up to 1rem/16px semibold as scan anchors — everything else in a row stays at Body.
-- **Label** (500, 0.75rem/12px): chips, section eyebrows ("Fundamentals"), source/as-of lines, dt labels in the expanded holding detail.
+- **Display** (600, 2.5rem/40px, 1.06 leading, −0.03em tracking): the opening question on the home screen. Used at most once per view.
+- **Headline** (600, 1.75rem/28px, 1.12 leading, −0.025em tracking): the headline of an answer or rundown.
+- **Title** (700, 1.25rem/20px, −0.02em tracking): the page wordmark ("Rundown").
+- **Body** (400, 1rem/16px, 1.45 leading): answer sentences and the composer. Never smaller on a phone, so the input doesn't zoom.
+- **Body Small** (400–500, 0.875rem/14px, 1.5 leading): holdings rows, detail panel text, suggested questions.
+- **Label** (500, 0.75rem/12px): chips, section eyebrows, legend, sizing notes.
+- **Mono** (400, 0.75rem/12px, down to 11px for source lines): reading steps, source and as-of lines, tile figures.
+- **Tile ticker** (700, −0.02em tracking): 28px at 10% or more of the current measure, 20px at 5% or more, otherwise 15px.
 
-All numeric values that appear in a column or are compared across rows (currency, percentages, quantities) use `tabular-nums` — this is applied consistently across `PortfolioSummary`, `HoldingRow`, and `AllocationBar`, and should be treated as a hard convention for any new numeric field, not an occasional nicety.
-
-`PnlValue` takes an optional `size` prop (`sm` default, `md`): `sm` is the Body-level treatment used in every holdings row; `md` steps the figure up to `text-base font-semibold` and is reserved for the one portfolio-level P&L in `PortfolioSummary`, so it can hold its own next to the enlarged Display total without competing with row-level figures. Figures stay ink at both sizes; any gain/loss color sits behind them as a fill.
+All numeric values that appear in a column or are compared across rows (currency, percentages, quantities) use `tabular-nums`. This is a hard convention for any new numeric field.
 
 ### Named Rules
 **The Tabular Numerals Rule.** Any number a user might scan down a column or compare across rows renders with `tabular-nums`. No numeric column may use proportional figures.
 
 ## Layout
 
-The page is a single centered column, `max-w-[720px]`, with `mx-auto` and responsive padding (`px-5 py-10` on mobile, `sm:px-6 sm:py-14` at larger widths) — this is the base layout for the header and every non-`ready` state (empty, error, loading).
+**Above 900px wide,** the home screen is two full-height panes that scroll independently: the conversation panel on the left (`minmax(0, 520px)`) and the map pane filling the rest. The page itself never scrolls.
 
-**The ready state is the one deliberate exception.** Once holdings exist, the container widens to `lg:max-w-[1180px]` at the `lg:` breakpoint and splits into two columns (`lg:grid-cols-[720px_1fr]`, `lg:gap-8`): the left column keeps the original single-column content (summary card, holdings list) at its original width, and the right column holds `HoldingDetailPanel` — a persistent master-detail panel showing whichever holding is selected. This was a deliberate, user-directed layout change (not a drift or an experiment) made to support screening a held position in more depth without leaving the list. Below `lg:`, there is still no multi-column grid: the right column disappears entirely and `HoldingDetailPanel` instead renders as a full-width slide-in overlay from the right (the same `fixed inset-0` / backdrop / `role="dialog"` mechanics as the advisor drawer), triggered by selecting a row. A narrow viewport never has to render two columns at once.
+- **Conversation panel:** wordmark, then the scrolling thread, then the composer pinned to the bottom with its scope line and the note "Explains what's relevant. Never tells you what to do."
+- **Map pane:** the sizing control and legend pinned at the top, the tile area in the middle, and the total and provenance line pinned at the bottom.
 
-Vertical rhythm is section-level: page header, then the portfolio summary card, then the holdings list, each separated by `mt-10`. Inside cards, spacing steps in a tight, consistent scale (`gap-x-4`, `gap-y-1.5`, `mt-2`, `mt-6`, `mt-7`) that reads as Tailwind's default 4px base — no bespoke spacing scale beyond that. The summary card's internal padding steps up to `p-7 sm:p-8` (28–32px), one notch more generous than the `p-6 sm:p-7` every other top-level card still uses, to give the enlarged Display figure room to breathe.
+**At 900px and below,** the layout is a single column with the conversation first and the composer pinned to the bottom. The header shows the wordmark and the total value; tapping the total opens the holdings list, which is the portfolio view on a phone. There is no treemap at these widths, because a 390px map runs out of room for labeled tiles almost immediately. The composer's scope line ("About NVDA") does the job the typing highlight does on the map.
 
-Holdings rows collapse from a three-column grid (`ticker/name` | `value/weight` | `P&L`) at `sm:` breakpoints to a two-row stacked layout below it, per the surface brief's mobile requirement that the summary stay pinned and the holdings list become the primary scroll surface. The holdings list itself does not paginate at the stated 5–30 position range — it scrolls.
+### Map density
+Every position keeps its own tile. There is no grouping into an "N smaller" tile.
+
+- **Minimum tile size is 76×44px**, enough for a ticker and a figure and for a reliable pointer target. Touch-sized targets at phone widths come from the holdings list, not the map.
+- **Tile area scrolls vertically when it has to.** Tiles fill the pane when they fit, which covers the expected 5–30 positions at desktop sizes. A more lopsided portfolio or a shorter window grows the tile area past one screen, and only that area scrolls. The map never scrolls horizontally: the number of columns is limited by the pane's width.
+- **Columns come from value and hold across sizing modes**, so tiles resize rather than jump. They're recomputed only when the positions or the pane's width change.
+- **Minimum-size tiles aren't proportional.** When any tile is drawn larger than its share, the map says so next to the legend: "Small positions are shown at a minimum size." The figures on the tile stay exact.
+
+### States
+- **Empty (no brokerage linked):** no map. The conversation panel explains what connecting does and offers Connect your brokerage.
+- **Loading:** static neutral placeholder tiles, with no shimmer.
+- **Error (positions failing, nothing cached):** no map. An error card says what failed and offers Try again.
+- **Stale:** the map renders normally, with the stale chip and the older as-of time on the provenance line. Stale data is never unlabeled.
+- **Answer states:** reading, writing, done, stopped, and retracted are specified in the overhaul plan's client state table. A retraction clears focus, returns to value sizing, and shows only the safe fallback.
+
+### Holdings list and detail
+The holdings list is the map's table view, reached by a toggle in the map pane, and shows the same positions and figures. It's also how small tiles stay easy to reach by keyboard or assistive technology. A details control on a focused tile opens `HoldingDetailPanel`, which overlays the map pane rather than taking a permanent column. Holdings rows keep their responsive grid: three columns from the `sm:` breakpoint, two stacked rows below it.
 
 ## Elevation & Depth
 
-Rundown is flat by default: cards are distinguished by a 1px border (`--color-border`) and a background-color step (surface vs. paper), never by a drop shadow. Shadow is reserved for elements that are literally floating above the page — the advisor's slide-in drawer (`shadow-xl`) and its floating action trigger (`shadow-lg shadow-ink/10`). Everything embedded in the normal document flow, including nested detail cards inside an expanded holding row, uses border + tonal background instead.
+Rundown is flat by default: surfaces are distinguished by a 1px border (`--color-border`) and a background-color step (surface vs. paper), never by a drop shadow. Shadow is reserved for elements that are literally floating above the page, such as `HoldingDetailPanel` when it overlays the map pane (`shadow-xl`). Everything embedded in the normal document flow, including map tiles and nested detail cards, uses a border or tonal background instead.
 
 ### Named Rules
-**The Flat-At-Rest Rule.** Surfaces embedded in page flow never carry a shadow. Shadow only appears on elements that overlay the page (modals, drawers, floating triggers) — it signals "this is not part of the page," not "this card is important."
+**The Flat-At-Rest Rule.** Surfaces embedded in page flow never carry a shadow. Shadow only appears on elements that overlay the page (modals, overlaid panels) — it signals "this is not part of the page," not "this card is important."
 
 ## Motion
 
-Rundown has exactly one authored motion moment, on the portfolio summary card, and no motion anywhere else in normal page flow: the Display total-value figure counts up from zero (`components/AnimatedCurrency.tsx`, ease-out-expo, 900ms) while the allocation bar's segments grow in from zero width in the same beat (the `.segment-grow` utility in `globals.css`, `transform: scaleX()` off a `transform-origin: left` — never an animated `width`, which thrashes layout). Together they read as one reveal for the summary card on load, not two competing effects. Both respect `prefers-reduced-motion: reduce` by rendering their final state immediately.
+Motion explains what the assistant is doing, and only then. Nothing animates on page load.
+
+- **Tile resizing** (800ms, `cubic-bezier(0.16, 1, 0.3, 1)`): tiles change size when the sizing mode changes, whether the user or an answer changed it.
+- **Fill and outline changes** (160–220ms, ease): focus and dimming as sentences arrive or the pointer moves.
+- **Reading pulse** (1000ms, opacity to 0.5, staggered 70ms per tile): in-scope tiles while Rundown reads.
+- **Answer headline** (360ms, 6px rise and fade): once per answer, as its first sentence is released.
+
+`prefers-reduced-motion: reduce` removes all of it: results appear in their final state, nothing pulses, and tiles change size instantly.
 
 ### Named Rules
-**The One-Moment Rule.** Motion is reserved for the summary card's load-in beat. Do not add entrance animation to holdings rows, state transitions, or any other section — a list of 5–30 rows staggering in on every load is exactly the "scattered effects" this system refuses. If a future feature needs its own moment, it should replace or extend this one rather than add a second.
+**The Motion-Follows-Meaning Rule.** Every animation must correspond to a change in what the assistant is doing or what the map is showing. Don't add entrance animation, count-ups, or staggered reveals. This replaces the earlier One-Moment Rule, which belonged to the dashboard's summary card.
+
+**The Answer-Owns-Sizing-Until-You-Touch-It Rule.** An answer may change the sizing mode as its sentences arrive, and the map says so. If the user changes sizing during an answer, the answer stops changing it for that turn.
 
 ## Shapes
 
-Two radius steps carry the whole system: a large radius (16px, `rounded-2xl`) for primary cards — the portfolio summary card, the holdings list container, the advisor drawer's message bubbles — and a smaller radius (8px, `rounded-lg`) for content nested one level inside those cards (fundamentals/news/filing detail boxes, loading-skeleton bars). Fully round (`rounded-full`) is reserved for anything pill- or dot-shaped: chips, primary/accent buttons, the ticker-initial avatar, the allocation bar and its legend dots, the advisor's floating trigger and input field.
+Three radius steps carry the system: a large radius (16px, `rounded-2xl`) for primary cards, the composer, and the holdings list container; a smaller radius (8px, `rounded-lg`) for content nested one level inside those cards (fundamentals/news/filing detail boxes, loading placeholders); and the smallest (6px, `rounded-md`) for map tiles, which sit 4px apart and read as one field. Fully round (`rounded-full`) is reserved for anything pill- or dot-shaped: chips, buttons, and the ticker-initial avatar.
 
 Borders are uniformly 1px and low-contrast (`border-border` at rest, stepping up to `border-border-strong` on hover). There is no heavy-border or outlined-button treatment anywhere in the system.
 
@@ -213,9 +261,9 @@ Borders are uniformly 1px and low-contrast (`border-border` at rest, stepping up
 
 ### Buttons
 - **Shape:** fully round (`rounded-full`) at every size used.
-- **Primary (ink):** `bg-ink` (#14161a) with white text — used for state-recovery actions ("Connect your brokerage," "Try again") and the advisor's floating trigger. Hover softens to ~85% opacity.
-- **Accent:** `bg-accent` (#3654d6) with white text — used narrowly, for the advisor chat's "Ask" submit button, where the accent doubles as the assistant's brand touch. Hover deepens to `accent-ink`.
-- **Ghost/Text:** accent-ink colored text with `hover:underline`, no background — used for the single in-context "Ask about this position →" link inside an expanded holding row.
+- **Primary (ink):** `bg-ink` (#14161a) with white text, for Ask, Stop, Get today's rundown, Connect your brokerage, and Try again. Hover softens to ~85% opacity.
+- **Suggested question:** white with a 1px border, 44px minimum height, left-aligned text, for starter questions and follow-ups. Hover strengthens the border.
+- **Ghost/Text:** accent-ink colored text with `hover:underline`, no background, for inline links.
 
 ### Chips
 - **Style:** `rounded-full`, `px-2.5 py-1`, `text-xs font-medium`, soft-tint background with matching darker text — never a solid/saturated fill.
@@ -226,23 +274,30 @@ Borders are uniformly 1px and low-contrast (`border-border` at rest, stepping up
 - **Background:** `surface` (white) for top-level cards; `paper` (the page background) for content nested one level inside a surface card — this tonal step, not a border, is what signals nesting depth.
 - **Shadow Strategy:** none at rest; see Elevation & Depth.
 - **Border:** 1px `border-border` on every card, `border-border-strong` on hover for interactive nested cards (e.g. the news-item link).
-- **Internal Padding:** `p-6`/`p-7` (24–28px) for top-level cards, except the portfolio summary card at `p-7`/`p-8` (28–32px) — see Layout; `px-3.5 py-3` (14/12px) for nested detail boxes; `px-1 py-4` per holdings row.
+- **Internal Padding:** `p-6`/`p-7` (24–28px) for top-level cards; `px-3.5 py-3` (14/12px) for nested detail boxes; `px-1 py-4` per holdings row.
 
-### Inputs / Fields
-- **Style:** `rounded-full`, `border-border`, `bg-paper`, `px-4 py-2.5` — used for the single text input in the advisor chat composer.
-- **Focus:** border shifts to `accent` (#3654d6), no glow/ring.
+### Composer
+A single text input and Ask button in a `rounded-2xl`, 1px-bordered surface pinned to the bottom of the conversation. Below the input, a mono scope line shows "All 11 positions" or "About NVDA" as the user types. The input's border shifts to ink on focus, with no glow. While an answer is running, Ask becomes Stop.
+
+### Portfolio Map (signature component)
+Tiles are real buttons with full accessible names, such as "NVDA, NVIDIA Corp. 13.1% of portfolio, +85.4% since cost. Ask about this position." Each shows a ticker and a figure in ink: weight and change since cost by value, percent of cost by cost, and signed dollars by gain or loss. Figures carry a sign and a `▲`/`▼` glyph. Clicking a tile writes a question into the composer without sending it. Focus is a 3px inset ink outline, identical on a gain or a loss. The sizing control is a three-part segmented control (Value, Cost, Gain or loss) that marks the pressed mode, with "Rundown changed this to match its answer" beside it when an answer did so.
+
+### Answer
+A question bubble, then reading steps in mono, one per source, each saying what was read, its as-of time, and whether it was unavailable. Then the headline and sentences, which link to tiles in both directions on hover and keyboard focus. Sources are stated once for the answer, not per sentence, because the backend can't tie an arbitrary sentence to a source. Filing citations are the exception: they quote the source passage and link to the filing. A stopped or interrupted answer keeps its released sentences and is labeled incomplete.
+
+**Copy the prototype used that isn't supported, and must not ship:** "that you haven't opened yet" (Rundown stores no read state, so filing signals say when something was filed) and per-sentence source lines. "Nothing new" may only be said about sources actually checked.
 
 ### Status Chip (signature component)
-`StatusChip` is the system's one reusable semantic-color primitive: a three-tone pill (`stale` / `error` / `flag`) that is the *only* place status color and accent color are allowed to render as a filled background. Every other component either uses neutral ink or the accent's text-only forms. Any new status meaning should extend this component's tone set rather than inventing a new color pairing elsewhere.
+`StatusChip` is the system's one reusable semantic-color primitive: a three-tone pill (`stale` / `error` / `flag`) that is the *only* place status color and accent color are allowed to render as a filled background. Every other component either uses neutral ink or the accent's text-only forms. Any new status meaning should extend this component's tone set rather than inventing a new color pairing elsewhere. Gain/loss fills on map tiles are separate and are governed by The Gain/Loss Color Rule.
 
 ### Provenance line (signature pattern)
 Every provider-sourced value — portfolio freshness, fundamentals, news, filings — renders a trailing `text-xs text-ink-faint` line reading `{source} · as of {formatAsOf(timestamp)}` (or `{source} · {relative}` for news bylines). This mirrors the backend's `SourcedValue<T>` wrapper (`backend/app/schemas/common.py`) directly in the type layer (`lib/types.ts`) and is a hard product rule, not a nice-to-have — CLAUDE.md requires provenance and freshness on anything shown to the user. Any new data-bearing component must carry this line.
 
 ### Navigation
-There is no persistent nav chrome on this surface — `PageHeader` is a static wordmark + tagline, not a nav bar. The advisor is a persistent cross-cutting affordance: a floating circular trigger (bottom-right, `bg-ink`) that opens a right-side drawer, reachable globally or scoped to a specific position from within a holding row.
+There is no persistent nav chrome. The assistant is the home screen, not a drawer: there's no floating trigger, and every path into a question leads to the one composer. In UI copy the assistant is called "Rundown."
 
-### Master-Detail (Holdings)
-On the ready state at `lg:` and up, `HoldingSelectionProvider` tracks which single holding (if any) is selected; clicking a row selects it (clicking the same row again deselects), and `HoldingDetailPanel` renders that holding's quantity/price/cost-basis/account, its flag reason, and its supporting data (fundamentals/news/filing) in the persistent right column. Only one holding is ever selected at a time — this is not a multi-expand accordion. Below `lg:`, the same panel renders as an overlay instead of a column; the selection model doesn't change, only its presentation.
+### Holding Detail
+`HoldingDetailPanel` shows one holding's quantity, price, cost basis, and account, its charts, its flag reason, and its supporting fundamentals, news, and filing. Only one is open at a time, and it never replaces the map as the place to ask a question.
 
 ## Do's and Don'ts
 
@@ -252,7 +307,8 @@ On the ready state at `lg:` and up, `HoldingSelectionProvider` tracks which sing
 - **Do** attach a `{source} · as of {timestamp}` line to any value fetched from a provider, using `formatAsOf` for timestamped values.
 - **Do** format date-only values (no time-of-day component, e.g. a filing date) with `formatDate`'s explicit `timeZone: "UTC"` — this is intentional, not a bug: a bare `YYYY-MM-DD` string parses as UTC midnight, and formatting it in the viewer's local zone can roll it back a day west of UTC. Don't remove the `timeZone: "UTC"` option.
 - **Do** use the paper/surface tonal step (not a border) to distinguish content nested inside a card.
-- **Do** keep shadows reserved for overlay elements (drawer, floating trigger) and flat borders for everything in normal page flow.
+- **Do** keep shadows reserved for overlay elements and flat borders for everything in normal page flow.
+- **Do** give every position its own tile at no less than 76×44px, and let the tile area scroll when they don't all fit.
 
 ### Don't:
 - **Don't** use gain/loss color for anything beyond the fact it encodes, or use color to signal urgency, approval, or what to do next. Directive advice remains a legal boundary (Investment Advisers Act, CLAUDE.md hard rule 1), and this constrains any component that touches gain/loss.
@@ -261,3 +317,4 @@ On the ready state at `lg:` and up, `HoldingSelectionProvider` tracks which sing
 - **Don't** ship a data point without a source and as-of timestamp, even in a compact or secondary UI placement.
 - **Don't** introduce a second accent hue. The system's "Restrained" color strategy (per `PRODUCT.md`'s Brand Commitments) means one accent, used sparingly — not a rotating brand palette.
 - **Don't** design new screens against dark mode yet; the system is light-mode only by a deliberate use-scene decision, not an oversight, and dark values haven't been established.
+- **Don't** let an answer's model output choose what the map shows. Focus and sizing are derived by the backend from released sentences, from a closed set of held symbols and sizing modes.
