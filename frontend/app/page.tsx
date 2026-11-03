@@ -1,18 +1,11 @@
-import { AdvisorPanel } from "@/components/advisor/AdvisorPanel";
-import { AdvisorProvider } from "@/components/advisor/AdvisorProvider";
-import { AdvisorTrigger } from "@/components/advisor/AdvisorTrigger";
-import { DashboardMap } from "@/components/map/DashboardMap";
-import { HoldingDetailPanel } from "@/components/holdings/HoldingDetailPanel";
-import { HoldingSelectionProvider } from "@/components/holdings/HoldingSelectionProvider";
-import { HoldingsList } from "@/components/holdings/HoldingsList";
 import { PageHeader } from "@/components/PageHeader";
-import { PortfolioSummary } from "@/components/PortfolioSummary";
 import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
 import { LoadingSkeleton } from "@/components/states/LoadingSkeleton";
+import { Workspace } from "@/components/workspace/Workspace";
 import { loadDashboard } from "@/lib/dashboard";
-import { ACCOUNT, getHoldings, getPortfolioTotals, getPositionsFreshness, getRollupFixture } from "@/lib/fixtures";
-import type { DashboardState, HoldingDetail, PortfolioRollup, SourcedValue } from "@/lib/types";
+import { ACCOUNT, getHoldings, getPortfolioTotals, getRollupFixture } from "@/lib/fixtures";
+import type { DashboardState } from "@/lib/types";
 
 function resolvePreviewState(raw: string | string[] | undefined): DashboardState | null {
   const value = Array.isArray(raw) ? raw[0] : raw;
@@ -29,39 +22,13 @@ function resolvePreviewState(raw: string | string[] | undefined): DashboardState
   return null;
 }
 
-function ReadyLayout({
-  holdings,
-  children,
-}: {
-  holdings: HoldingDetail[];
-  children: React.ReactNode;
-}) {
+/** The states with no positions to show yet: no assistant or map, just what happened and what's next. */
+function NoPositions({ children }: { children: React.ReactNode }) {
   return (
-    <HoldingSelectionProvider>
-      <div className="lg:grid lg:grid-cols-[720px_1fr] lg:items-start lg:gap-8">
-        <div className="min-w-0">{children}</div>
-        <HoldingDetailPanel holdings={holdings} />
-      </div>
-    </HoldingSelectionProvider>
-  );
-}
-
-/** Temporary home for the map, until the workspace layout replaces this page's dashboard. */
-function PortfolioSection({
-  holdings,
-  rollup,
-}: {
-  holdings: HoldingDetail[];
-  rollup: SourcedValue<PortfolioRollup> | null;
-}) {
-  const list = <HoldingsList holdings={holdings} />;
-  if (!rollup) return <div className="mt-10">{list}</div>;
-
-  const names = Object.fromEntries(holdings.map((h) => [h.position.symbol, h.name]));
-  return (
-    <div className="mt-10 min-[901px]:h-[680px]">
-      <DashboardMap rollup={rollup} names={names} tableView={list} />
-    </div>
+    <main className="mx-auto w-full max-w-[720px] flex-1 px-5 py-10 sm:px-6 sm:py-14">
+      <PageHeader />
+      {children}
+    </main>
   );
 }
 
@@ -73,33 +40,19 @@ export default async function Home(props: PageProps<"/">) {
 
   const result = await loadDashboard();
 
+  if (result.kind === "empty") return <NoPositions><EmptyState /></NoPositions>;
+  if (result.kind === "error") return <NoPositions><ErrorState /></NoPositions>;
+
   return (
-    <AdvisorProvider>
-      <main
-        className={`mx-auto w-full max-w-[720px] flex-1 px-5 py-10 sm:px-6 sm:py-14 ${
-          result.kind === "ready" ? "lg:max-w-[1180px]" : ""
-        }`}
-      >
-        <PageHeader />
-
-        {result.kind === "empty" && <EmptyState />}
-        {result.kind === "error" && <ErrorState />}
-        {result.kind === "ready" && (
-          <ReadyLayout holdings={result.holdings}>
-            <PortfolioSummary
-              holdings={result.holdings}
-              totals={result.totals}
-              account={result.account}
-              freshness={result.freshness}
-            />
-            <PortfolioSection holdings={result.holdings} rollup={result.rollup} />
-          </ReadyLayout>
-        )}
-      </main>
-
-      {result.kind === "ready" && <AdvisorTrigger />}
-      <AdvisorPanel />
-    </AdvisorProvider>
+    <Workspace
+      holdings={result.holdings}
+      rollup={result.rollup}
+      summary={{
+        totalValue: result.totals.totalValue,
+        includesCash: result.account.cash !== null,
+        gainPercent: result.totals.unrealizedPnlPercent,
+      }}
+    />
   );
 }
 
@@ -109,34 +62,23 @@ export default async function Home(props: PageProps<"/">) {
  * backend connection. The default (no `state` param) always uses real data.
  */
 function PreviewDashboard({ state }: { state: DashboardState }) {
+  if (state === "loading") return <NoPositions><LoadingSkeleton /></NoPositions>;
+  if (state === "empty") return <NoPositions><EmptyState /></NoPositions>;
+  if (state === "error") return <NoPositions><ErrorState /></NoPositions>;
+
   const isStale = state === "stale";
-  const hasPositions = isStale || state === "ready" || state === "dense";
   const holdings = getHoldings(isStale, state === "dense");
   const totals = getPortfolioTotals(holdings);
-  const freshness = getPositionsFreshness(isStale);
 
   return (
-    <AdvisorProvider>
-      <main
-        className={`mx-auto w-full max-w-[720px] flex-1 px-5 py-10 sm:px-6 sm:py-14 ${
-          hasPositions ? "lg:max-w-[1180px]" : ""
-        }`}
-      >
-        <PageHeader />
-
-        {state === "loading" && <LoadingSkeleton />}
-        {state === "empty" && <EmptyState />}
-        {state === "error" && <ErrorState />}
-        {hasPositions && (
-          <ReadyLayout holdings={holdings}>
-            <PortfolioSummary holdings={holdings} totals={totals} account={ACCOUNT} freshness={freshness} />
-            <PortfolioSection holdings={holdings} rollup={getRollupFixture(holdings, isStale)} />
-          </ReadyLayout>
-        )}
-      </main>
-
-      {hasPositions && <AdvisorTrigger />}
-      <AdvisorPanel />
-    </AdvisorProvider>
+    <Workspace
+      holdings={holdings}
+      rollup={getRollupFixture(holdings, isStale)}
+      summary={{
+        totalValue: totals.totalValue,
+        includesCash: ACCOUNT.cash !== null,
+        gainPercent: totals.unrealizedPnlPercent,
+      }}
+    />
   );
 }

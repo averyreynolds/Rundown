@@ -3,10 +3,9 @@
 import { useEffect } from "react";
 import { PnlValue } from "../PnlValue";
 import { StatusChip } from "../StatusChip";
-import { useAdvisor } from "../advisor/AdvisorProvider";
+import { useWorkspace } from "../workspace/WorkspaceProvider";
 import { CostBasisBar } from "./CostBasisBar";
 import { PositionChart } from "./PositionChart";
-import { useHoldingSelection } from "./HoldingSelectionProvider";
 import { formatAsOf, formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import type { HoldingDetail } from "@/lib/types";
 
@@ -27,7 +26,7 @@ function PanelHeader({ holding, onClose }: { holding: HoldingDetail; onClose: ()
 }
 
 function HoldingDetailContent({ holding }: { holding: HoldingDetail }) {
-  const { open } = useAdvisor();
+  const { ask, clearSelection } = useWorkspace();
   const { position, flagged, flagReason, fundamentals, news, filing } = holding;
 
   const costBasisPerShare = position.quantity !== 0 ? position.costBasis / position.quantity : position.currentPrice;
@@ -145,9 +144,13 @@ function HoldingDetailContent({ holding }: { holding: HoldingDetail }) {
       )}
 
       <button
-        onClick={() =>
-          open(position.symbol, filing ? { symbol: position.symbol, accessionNumber: filing.value.accessionNumber } : undefined)
-        }
+        onClick={() => {
+          ask(
+            `What's relevant to my ${position.symbol} position right now?`,
+            filing ? { symbol: position.symbol, accessionNumber: filing.value.accessionNumber } : undefined,
+          );
+          clearSelection();
+        }}
         className="text-sm font-medium text-accent-ink hover:underline"
       >
         Ask about this position →
@@ -156,68 +159,37 @@ function HoldingDetailContent({ holding }: { holding: HoldingDetail }) {
   );
 }
 
-function EmptyPanelState() {
-  return (
-    <div className="flex h-full min-h-[220px] flex-col items-center justify-center gap-2 px-6 py-10 text-center">
-      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-paper">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-          <path
-            d="M2 8a6 6 0 1 1 12 0A6 6 0 0 1 2 8Zm6-3v3l2 1.5"
-            stroke="currentColor"
-            strokeWidth="1.3"
-            strokeLinecap="round"
-            className="text-ink-faint"
-          />
-        </svg>
-      </div>
-      <p className="text-sm text-ink-secondary">Select a holding to see its fundamentals, filing, and news.</p>
-    </div>
-  );
-}
-
+/**
+ * Overlays the map pane above 900px, leaving the conversation usable, and the
+ * whole screen below it. See "Holdings list and detail" in DESIGN.md.
+ */
 export function HoldingDetailPanel({ holdings }: { holdings: HoldingDetail[] }) {
-  const { selectedSymbol, clear } = useHoldingSelection();
+  const { selectedSymbol, clearSelection } = useWorkspace();
   const holding = holdings.find((h) => h.position.symbol === selectedSymbol) ?? null;
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") clear();
+      if (e.key === "Escape") clearSelection();
     }
     if (holding) document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [holding, clear]);
+  }, [holding, clearSelection]);
+
+  if (!holding) return null;
 
   return (
-    <>
-      {holding && (
-        <div className="fixed inset-0 z-50 flex justify-end lg:hidden">
-          <button aria-label="Close details" onClick={clear} className="absolute inset-0 bg-ink/20 backdrop-blur-[1px]" />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`${holding.position.symbol} details`}
-            className="relative flex h-full w-full max-w-md flex-col border-l border-border bg-surface shadow-xl"
-          >
-            <PanelHeader holding={holding} onClose={clear} />
-            <div className="flex-1 overflow-y-auto px-5 py-5">
-              <HoldingDetailContent holding={holding} />
-            </div>
-          </div>
+    <div className="fixed inset-0 z-50 flex justify-end min-[901px]:left-[520px]">
+      <button aria-label="Close details" onClick={clearSelection} className="absolute inset-0 bg-ink/20 backdrop-blur-[1px]" />
+      <div
+        role="dialog"
+        aria-label={`${holding.position.symbol} details`}
+        className="relative flex h-full w-full max-w-md flex-col border-l border-border bg-surface shadow-xl"
+      >
+        <PanelHeader holding={holding} onClose={clearSelection} />
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <HoldingDetailContent holding={holding} />
         </div>
-      )}
-
-      <div className="hidden lg:sticky lg:top-10 lg:block lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-border lg:bg-surface">
-        {holding ? (
-          <>
-            <PanelHeader holding={holding} onClose={clear} />
-            <div className="px-5 py-5">
-              <HoldingDetailContent holding={holding} />
-            </div>
-          </>
-        ) : (
-          <EmptyPanelState />
-        )}
       </div>
-    </>
+    </div>
   );
 }

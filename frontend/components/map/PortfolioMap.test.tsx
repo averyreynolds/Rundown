@@ -2,13 +2,14 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { HoldingSelectionProvider } from "../holdings/HoldingSelectionProvider";
 import { HoldingsList } from "../holdings/HoldingsList";
+import { WorkspaceProvider } from "../workspace/WorkspaceProvider";
 import { PortfolioMap } from "./PortfolioMap";
 import { getHoldings, getRollupFixture } from "@/lib/fixtures";
 import { formatCurrency, formatSignedCurrency } from "@/lib/format";
 import type { PortfolioRollup, PositionRollup, SourcedValue } from "@/lib/types";
 
+const SUMMARY = { totalValue: 5000, includesCash: true, gainPercent: 33.33 };
 const NAMES = { NVDA: "NVIDIA Corp.", UNH: "UnitedHealth Group Inc." };
 
 function rollupOf(positions: PositionRollup[], isStale = false): SourcedValue<PortfolioRollup> {
@@ -61,6 +62,7 @@ function renderMap(
     <PortfolioMap
       rollup={rollupOf(positions)}
       names={NAMES}
+      summary={SUMMARY}
       tableView={<p>table view</p>}
       tileAction="View details."
       {...props}
@@ -169,6 +171,46 @@ describe("PortfolioMap", () => {
     expect(onTileSelect).toHaveBeenCalledWith("UNH");
   });
 
+  it("offers details only on a focused tile, without triggering the tile itself", async () => {
+    const user = userEvent.setup();
+    const onTileSelect = vi.fn();
+    const onTileDetails = vi.fn();
+    renderMap({ focusedSymbols: ["UNH"], onTileSelect, onTileDetails });
+
+    expect(screen.queryByRole("button", { name: "NVDA details" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "UNH details" }));
+
+    expect(onTileDetails).toHaveBeenCalledWith("UNH");
+    expect(onTileSelect).not.toHaveBeenCalled();
+  });
+
+  it("reports hover and keyboard focus on a tile", async () => {
+    const user = userEvent.setup();
+    const onTileHover = vi.fn();
+    renderMap({ onTileHover });
+
+    await user.hover(tile("UNH"));
+    expect(onTileHover).toHaveBeenLastCalledWith("UNH");
+    await user.unhover(tile("UNH"));
+    expect(onTileHover).toHaveBeenLastCalledWith(null);
+
+    tile("NVDA").focus();
+    expect(onTileHover).toHaveBeenLastCalledWith("NVDA");
+  });
+
+  it("summarizes the whole portfolio under the map", () => {
+    renderMap();
+
+    expect(screen.getByText(/\$5,000\.00 total including cash/)).toBeInTheDocument();
+    expect(screen.getByText(/\+33\.33%\) since cost/)).toBeInTheDocument();
+  });
+
+  it("doesn't claim cash is included when none is known", () => {
+    renderMap({ summary: { ...SUMMARY, includesCash: false } });
+
+    expect(screen.queryByText(/including cash/)).not.toBeInTheDocument();
+  });
+
   it("shows source and as-of, with no stale chip on fresh data", () => {
     renderMap();
 
@@ -211,14 +253,15 @@ describe("PortfolioMap", () => {
     const holdings = getHoldings();
     const rollup = getRollupFixture(holdings);
     render(
-      <HoldingSelectionProvider>
+      <WorkspaceProvider held={[]}>
         <PortfolioMap
           rollup={rollup}
           names={Object.fromEntries(holdings.map((h) => [h.position.symbol, h.name]))}
+          summary={SUMMARY}
           tableView={<HoldingsList holdings={holdings} />}
           tileAction="View details."
         />
-      </HoldingSelectionProvider>,
+      </WorkspaceProvider>,
     );
 
     const area = screen.getByTestId("map-area");

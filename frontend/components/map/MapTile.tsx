@@ -12,6 +12,8 @@ import type { PositionRollup } from "@/lib/types";
 
 /** Below this width a tile's full label doesn't fit, so it shows the short one. */
 const FULL_LABEL_MIN_WIDTH = 132;
+const DETAILS_SIZE = 24;
+const DETAILS_INSET = 6;
 
 export type TileEmphasis = "focused" | "dimmed" | "none";
 
@@ -79,6 +81,8 @@ export function MapTile({
   isResizing,
   action,
   onSelect,
+  onHover,
+  onDetails,
 }: {
   row: PositionRollup;
   name: string;
@@ -91,6 +95,9 @@ export function MapTile({
   /** What activating the tile does, read out as the end of its accessible name. */
   action: string;
   onSelect?: (symbol: string) => void;
+  onHover?: (symbol: string | null) => void;
+  /** Offered on a focused tile, as a sibling button since buttons can't nest. */
+  onDetails?: (symbol: string) => void;
 }) {
   const isNarrow = tile.width < FULL_LABEL_MIN_WIDTH;
   const fill =
@@ -100,25 +107,55 @@ export function MapTile({
   // Identical on a gain or a loss: the outline must never read as an alert.
   const outline = emphasis === "focused" ? "shadow-[inset_0_0_0_3px_var(--color-ink)]" : "";
 
+  const motion = isResizing ? "map-tile-resizing" : "map-tile";
+
   return (
-    <button
-      type="button"
-      aria-label={accessibleName(row, name, action)}
-      aria-current={emphasis === "focused" ? "true" : undefined}
-      onClick={() => onSelect?.(row.symbol)}
-      style={{ left: tile.x, top: tile.y, width: tile.width, height: tile.height }}
-      className={`absolute flex flex-col justify-between overflow-hidden rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink ${
-        isNarrow ? "px-1.5 py-1" : "px-2.5 py-2"
-      } ${fill} ${outline} ${isResizing ? "map-tile-resizing" : "map-tile"}`}
+    <div
+      className="contents"
+      onMouseEnter={() => onHover?.(row.symbol)}
+      onMouseLeave={() => onHover?.(null)}
+      onFocus={() => onHover?.(row.symbol)}
+      onBlur={(event) => {
+        // Tabbing to the details control stays on this tile. Clearing here would
+        // remove that control just as it's about to receive focus.
+        if (!event.currentTarget.contains(event.relatedTarget)) onHover?.(null);
+      }}
     >
-      <span
-        className={`font-bold leading-[1.1] tracking-[-0.02em] ${tickerSize(shareOfMeasure)}`}
+      <button
+        type="button"
+        aria-label={accessibleName(row, name, action)}
+        aria-current={emphasis === "focused" ? "true" : undefined}
+        onClick={() => onSelect?.(row.symbol)}
+        style={{ left: tile.x, top: tile.y, width: tile.width, height: tile.height }}
+        className={`absolute flex flex-col justify-between overflow-hidden rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink ${
+          isNarrow ? "px-1.5 py-1" : "px-2.5 py-2"
+        } ${fill} ${outline} ${motion}`}
       >
-        {row.symbol}
-      </span>
-      <span className="whitespace-pre font-mono text-[11px] leading-[1.3] tabular-nums sm:text-xs">
-        {withSmallGlyph(tileLabel(row, sizing, isNarrow))}
-      </span>
-    </button>
+        <span
+          className={`font-bold leading-[1.1] tracking-[-0.02em] ${tickerSize(shareOfMeasure)}`}
+        >
+          {row.symbol}
+        </span>
+        <span className="whitespace-pre font-mono text-[11px] leading-[1.3] tabular-nums sm:text-xs">
+          {withSmallGlyph(tileLabel(row, sizing, isNarrow))}
+        </span>
+      </button>
+      {emphasis === "focused" && onDetails && (
+        <button
+          type="button"
+          aria-label={`${row.symbol} details`}
+          onClick={() => onDetails(row.symbol)}
+          style={{
+            left: tile.x + tile.width - DETAILS_SIZE - DETAILS_INSET,
+            top: tile.y + DETAILS_INSET,
+            width: DETAILS_SIZE,
+            height: DETAILS_SIZE,
+          }}
+          className={`absolute flex items-center justify-center rounded-full bg-surface text-xs font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink ${motion}`}
+        >
+          <span aria-hidden>i</span>
+        </button>
+      )}
+    </div>
   );
 }

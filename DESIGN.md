@@ -206,7 +206,7 @@ All numeric values that appear in a column or are compared across rows (currency
 **Above 900px wide,** the home screen is two full-height panes that scroll independently: the conversation panel on the left (`minmax(0, 520px)`) and the map pane filling the rest. The page itself never scrolls.
 
 - **Conversation panel:** wordmark, then the scrolling thread, then the composer pinned to the bottom with its scope line and the note "Explains what's relevant. Never tells you what to do."
-- **Map pane:** the sizing control and legend pinned at the top, the tile area in the middle, and the total and provenance line pinned at the bottom.
+- **Map pane:** the view toggle, sizing control, and legend pinned at the top, the tile area in the middle, and the total and provenance line pinned at the bottom.
 
 **At 900px and below,** the layout is a single column with the conversation first and the composer pinned to the bottom. The header shows the wordmark and the total value; tapping the total opens the holdings list, which is the portfolio view on a phone. There is no treemap at these widths, because a 390px map runs out of room for labeled tiles almost immediately. The composer's scope line ("About NVDA") does the job the typing highlight does on the map.
 
@@ -214,12 +214,12 @@ All numeric values that appear in a column or are compared across rows (currency
 Every position keeps its own tile. There is no grouping into an "N smaller" tile.
 
 - **Minimum tile size is 76×44px**, enough for a ticker and a figure and for a reliable pointer target. Touch-sized targets at phone widths come from the holdings list, not the map.
-- **Tile area scrolls vertically when it has to.** Tiles fill the pane when they fit, which covers the expected 5–30 positions at desktop sizes. A more lopsided portfolio or a shorter window grows the tile area past one screen, and only that area scrolls. The map never scrolls horizontally: the number of columns is limited by the pane's width.
+- **Tile area scrolls vertically when it has to.** Tiles fill the pane when they fit. A column of many small positions can need more height than the pane has, as 30 positions do in a typical laptop window, and then the tile area grows past one screen and only that area scrolls. The map never scrolls horizontally: the number of columns is limited by the pane's width.
 - **Columns come from value and hold across sizing modes**, so tiles resize rather than jump. They're recomputed only when the positions or the pane's width change.
 - **Minimum-size tiles aren't proportional.** When any tile is drawn larger than its share, the map says so next to the legend: "Small positions are shown at a minimum size." The figures on the tile stay exact.
 
 ### States
-- **Empty (no brokerage linked):** no map. The conversation panel explains what connecting does and offers Connect your brokerage.
+- **Empty (no brokerage linked):** no map or composer, since there's nothing to ask about yet. A centered card explains what connecting does and offers Connect your brokerage.
 - **Loading:** static neutral placeholder tiles, with no shimmer.
 - **Error (positions failing, nothing cached):** no map. An error card says what failed and offers Try again.
 - **Stale:** the map renders normally, with the stale chip and the older as-of time on the provenance line. Stale data is never unlabeled.

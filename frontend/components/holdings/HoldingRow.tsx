@@ -2,12 +2,12 @@
 
 import { PnlValue } from "../PnlValue";
 import { StatusChip } from "../StatusChip";
-import { useHoldingSelection } from "./HoldingSelectionProvider";
+import { useWorkspace } from "../workspace/WorkspaceProvider";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import type { HoldingDetail } from "@/lib/types";
 
 export function HoldingRow({ holding }: { holding: HoldingDetail }) {
-  const { selectedSymbol, select } = useHoldingSelection();
+  const { selectedSymbol, select } = useWorkspace();
   const { position, name, flagged } = holding;
   const isSelected = selectedSymbol === position.symbol;
 

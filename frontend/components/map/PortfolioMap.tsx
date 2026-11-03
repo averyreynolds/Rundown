@@ -6,11 +6,18 @@ import { StatusChip } from "../StatusChip";
 import { GainLossLegend } from "./GainLossLegend";
 import { MapTile, type TileEmphasis } from "./MapTile";
 import { SizingControl, type MapSizing } from "./SizingControl";
-import { formatAsOf, formatCurrency, formatSignedCurrency } from "@/lib/format";
+import { formatAsOf, formatCurrency, formatSignedCurrency, formatSignedPercent } from "@/lib/format";
 import { computeColumns, layoutTreemap, type TreemapBounds } from "@/lib/treemap";
 import type { PortfolioRollup, PositionRollup, SourcedValue } from "@/lib/types";
 
 type MapView = "map" | "table";
+
+/** The whole portfolio's line under the map, including what the rollup doesn't cover. */
+export interface PortfolioSummaryLine {
+  totalValue: number;
+  includesCash: boolean;
+  gainPercent: number;
+}
 
 const TILE_GAP = 4;
 // What the first render lays out against, before the area can be measured.
@@ -30,17 +37,23 @@ function measureOf(row: PositionRollup, sizing: MapSizing): number {
 export function PortfolioMap({
   rollup,
   names,
+  summary,
   tableView,
   focusedSymbols = [],
   tileAction,
   onTileSelect,
+  onTileHover,
+  onTileDetails,
 }: {
   rollup: SourcedValue<PortfolioRollup>;
   names: Readonly<Record<string, string>>;
+  summary: PortfolioSummaryLine;
   tableView: React.ReactNode;
   focusedSymbols?: readonly string[];
   tileAction: string;
   onTileSelect?: (symbol: string) => void;
+  onTileHover?: (symbol: string | null) => void;
+  onTileDetails?: (symbol: string) => void;
 }) {
   const [view, setView] = useState<MapView>("map");
   const [sizing, setSizing] = useState<MapSizing>("value");
@@ -48,7 +61,7 @@ export function PortfolioMap({
   const [isResizing, setIsResizing] = useState(false);
   const areaRef = useRef<HTMLDivElement>(null);
 
-  const { positions, totalMarketValue, netGainDollars } = rollup.value;
+  const { positions, netGainDollars } = rollup.value;
 
   useEffect(() => {
     const area = areaRef.current;
@@ -150,6 +163,8 @@ export function PortfolioMap({
                 isResizing={isResizing}
                 action={tileAction}
                 onSelect={onTileSelect}
+                onHover={onTileHover}
+                onDetails={onTileDetails}
               />
             );
           })}
@@ -169,11 +184,11 @@ export function PortfolioMap({
 
       <p className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-ink-faint tabular-nums">
         <span>
-          {formatCurrency(totalMarketValue)} in positions,{" "}
+          {formatCurrency(summary.totalValue)} total{summary.includesCash ? " including cash" : ""},{" "}
           <span aria-hidden className="text-[0.7em]">
             {netGainDollars < 0 ? "▼" : "▲"}
           </span>{" "}
-          {formatSignedCurrency(netGainDollars)} since cost
+          {formatSignedCurrency(netGainDollars)} ({formatSignedPercent(summary.gainPercent)}) since cost
         </span>
         <span className="inline-flex items-center gap-2">
           {rollup.isStale && <StatusChip tone="stale">Data is stale</StatusChip>}
