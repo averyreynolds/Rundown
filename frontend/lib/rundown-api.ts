@@ -59,6 +59,33 @@ async function rundownFetch(path: string, init?: RequestInit): Promise<unknown> 
   return res.json();
 }
 
+/** Like `rundownFetch`, but returns the unread body for a caller to stream onward. */
+async function rundownStream(
+  path: string,
+  init: RequestInit,
+): Promise<ReadableStream<Uint8Array>> {
+  let res: Response;
+  try {
+    res = await fetch(`${getRundownApiBaseUrl()}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${getRundownApiBearerToken()}`,
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+    });
+  } catch (cause) {
+    throw new RundownApiError(0, `Could not reach the Rundown backend at ${getRundownApiBaseUrl()}: ${cause}`);
+  }
+
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => null);
+    const detail = body && typeof body === "object" && "detail" in body ? String(body.detail) : res.statusText;
+    throw new RundownApiError(res.status, detail);
+  }
+  return res.body;
+}
+
 interface RawSourced<T> {
   value: T;
   source: string;
@@ -334,18 +361,34 @@ interface RawCitation {
   as_of: string;
 }
 
+function advisorRequestBody(input: AdvisorChatInput): string {
+  return JSON.stringify({
+    question: input.question,
+    context_refs: {
+      symbols: input.symbols ?? [],
+      filing_ref: input.filingRef
+        ? { symbol: input.filingRef.symbol, accession_number: input.filingRef.accessionNumber }
+        : null,
+    },
+  });
+}
+
+/** The backend's server-sent answer, for `app/api/advisor/chat/stream/route.ts` to pass through. */
+export function openAdvisorStream(
+  input: AdvisorChatInput,
+  signal: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+  return rundownStream("/advisor/chat/stream", {
+    method: "POST",
+    body: advisorRequestBody(input),
+    signal,
+  });
+}
+
 export async function postAdvisorChat(input: AdvisorChatInput): Promise<AdvisorChatResult> {
   const raw = (await rundownFetch("/advisor/chat", {
     method: "POST",
-    body: JSON.stringify({
-      question: input.question,
-      context_refs: {
-        symbols: input.symbols ?? [],
-        filing_ref: input.filingRef
-          ? { symbol: input.filingRef.symbol, accession_number: input.filingRef.accessionNumber }
-          : null,
-      },
-    }),
+    body: advisorRequestBody(input),
   })) as { answer: string; citations: RawCitation[] };
 
   return {

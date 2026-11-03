@@ -26,9 +26,15 @@ const currencyFormatterAbbreviated = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-/** For tight spaces like a small map tile, e.g. "+$3.8K". Pair it with the exact figure elsewhere. */
+/**
+ * For tight spaces like a small map tile, e.g. "+$3.8K" or "+$138". Pair it with
+ * the exact figure elsewhere. Under $1,000 it rounds to whole dollars, since
+ * "$137.5" reads like a mistake rather than an abbreviation.
+ */
 export function formatSignedCurrencyAbbreviated(value: number): string {
-  const formatted = currencyFormatterAbbreviated.format(Math.abs(value));
+  const size = Math.abs(value);
+  const formatted =
+    size < 1000 ? currencyFormatterCompact.format(size) : currencyFormatterAbbreviated.format(size);
   return value < 0 ? `−${formatted}` : `+${formatted}`;
 }
 

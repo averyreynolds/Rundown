@@ -1,4 +1,4 @@
-export type MapSizing = "value" | "cost" | "gain";
+import type { MapSizing } from "@/lib/types";
 
 const OPTIONS: { id: MapSizing; label: string }[] = [
   { id: "value", label: "Value" },

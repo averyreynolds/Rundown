@@ -5,10 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { StatusChip } from "../StatusChip";
 import { GainLossLegend } from "./GainLossLegend";
 import { MapTile, type TileEmphasis } from "./MapTile";
-import { SizingControl, type MapSizing } from "./SizingControl";
+import { SizingControl } from "./SizingControl";
 import { formatAsOf, formatCurrency, formatSignedCurrency, formatSignedPercent } from "@/lib/format";
 import { computeColumns, layoutTreemap, type TreemapBounds } from "@/lib/treemap";
-import type { PortfolioRollup, PositionRollup, SourcedValue } from "@/lib/types";
+import type { MapSizing, PortfolioRollup, PositionRollup, SourcedValue } from "@/lib/types";
 
 type MapView = "map" | "table";
 
@@ -40,6 +40,10 @@ export function PortfolioMap({
   summary,
   tableView,
   focusedSymbols = [],
+  readingSymbols = [],
+  sizing,
+  onSizingChange,
+  sizingNote = null,
   tileAction,
   onTileSelect,
   onTileHover,
@@ -50,15 +54,26 @@ export function PortfolioMap({
   summary: PortfolioSummaryLine;
   tableView: React.ReactNode;
   focusedSymbols?: readonly string[];
+  /** The positions an answer is reading, which pulse until its first sentence. */
+  readingSymbols?: readonly string[];
+  sizing: MapSizing;
+  onSizingChange: (sizing: MapSizing) => void;
+  /** Says when something other than the user changed the sizing. */
+  sizingNote?: string | null;
   tileAction: string;
   onTileSelect?: (symbol: string) => void;
   onTileHover?: (symbol: string | null) => void;
   onTileDetails?: (symbol: string) => void;
 }) {
   const [view, setView] = useState<MapView>("map");
-  const [sizing, setSizing] = useState<MapSizing>("value");
   const [bounds, setBounds] = useState(INITIAL_BOUNDS);
   const [isResizing, setIsResizing] = useState(false);
+  // Only a change of sizing mode resizes with motion, whoever made the change.
+  const [lastSizing, setLastSizing] = useState(sizing);
+  if (sizing !== lastSizing) {
+    setLastSizing(sizing);
+    setIsResizing(true);
+  }
   const areaRef = useRef<HTMLDivElement>(null);
 
   const { positions, netGainDollars } = rollup.value;
@@ -98,11 +113,6 @@ export function PortfolioMap({
   const totalMeasure = Object.values(measures).reduce((sum, measure) => sum + measure, 0);
   const hasFocus = focusedSymbols.length > 0;
 
-  function changeSizing(next: MapSizing) {
-    setIsResizing(true);
-    setSizing(next);
-  }
-
   function emphasisOf(symbol: string): TileEmphasis {
     if (!hasFocus) return "none";
     return focusedSymbols.includes(symbol) ? "focused" : "dimmed";
@@ -127,7 +137,10 @@ export function PortfolioMap({
               </button>
             ))}
           </div>
-          {view === "map" && <SizingControl sizing={sizing} onChange={changeSizing} />}
+          {view === "map" && <SizingControl sizing={sizing} onChange={onSizingChange} />}
+          {view === "map" && sizingNote && (
+            <p className="text-xs text-ink-secondary">{sizingNote}</p>
+          )}
         </div>
         {view === "map" && <GainLossLegend />}
       </div>
@@ -161,6 +174,9 @@ export function PortfolioMap({
                 shareOfMeasure={totalMeasure > 0 ? (measures[tile.symbol] ?? 0) / totalMeasure : 0}
                 emphasis={emphasisOf(tile.symbol)}
                 isResizing={isResizing}
+                readingIndex={
+                  readingSymbols.includes(tile.symbol) ? readingSymbols.indexOf(tile.symbol) : null
+                }
                 action={tileAction}
                 onSelect={onTileSelect}
                 onHover={onTileHover}

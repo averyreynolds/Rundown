@@ -18,7 +18,16 @@ export function WorkspaceMap({
   summary: PortfolioSummaryLine;
   tableView: React.ReactNode;
 }) {
-  const { focusedSymbols, setHoveredSymbols, writeQuestion, select } = useWorkspace();
+  const {
+    focusedSymbols,
+    readingSymbols,
+    sizing,
+    setSizing,
+    sizingNote,
+    setHoveredSymbols,
+    writeQuestion,
+    select,
+  } = useWorkspace();
 
   return (
     <PortfolioMap
@@ -27,6 +36,10 @@ export function WorkspaceMap({
       summary={summary}
       tableView={tableView}
       focusedSymbols={focusedSymbols}
+      readingSymbols={readingSymbols}
+      sizing={sizing}
+      onSizingChange={setSizing}
+      sizingNote={sizingNote}
       tileAction="Ask about this position."
       onTileSelect={(symbol) => writeQuestion(`What's relevant to my ${symbol} position?`)}
       onTileHover={(symbol) => setHoveredSymbols(symbol ? [symbol] : [])}

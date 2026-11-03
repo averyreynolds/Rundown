@@ -11,6 +11,9 @@ export interface SourcedValue<T> {
   isStale: boolean;
 }
 
+/** How the portfolio map sizes its tiles. Mirrors `app.domain.map_hints.MapSizing`. */
+export type MapSizing = "value" | "cost" | "gain";
+
 // schemas/portfolio.py
 export interface PositionView {
   symbol: string;

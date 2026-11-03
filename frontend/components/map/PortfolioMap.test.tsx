@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -7,7 +8,7 @@ import { WorkspaceProvider } from "../workspace/WorkspaceProvider";
 import { PortfolioMap } from "./PortfolioMap";
 import { getHoldings, getRollupFixture } from "@/lib/fixtures";
 import { formatCurrency, formatSignedCurrency } from "@/lib/format";
-import type { PortfolioRollup, PositionRollup, SourcedValue } from "@/lib/types";
+import type { MapSizing, PortfolioRollup, PositionRollup, SourcedValue } from "@/lib/types";
 
 const SUMMARY = { totalValue: 5000, includesCash: true, gainPercent: 33.33 };
 const NAMES = { NVDA: "NVIDIA Corp.", UNH: "UnitedHealth Group Inc." };
@@ -54,12 +55,17 @@ const UNH = row({
   shareOfCostPct: 66.7,
 });
 
-function renderMap(
-  props: Partial<React.ComponentProps<typeof PortfolioMap>> = {},
-  positions: PositionRollup[] = [NVDA, UNH],
-) {
+type MapProps = React.ComponentProps<typeof PortfolioMap>;
+
+/** Holds the sizing the way `WorkspaceMap` does through the workspace. */
+function SizedMap(props: Omit<MapProps, "sizing" | "onSizingChange"> & { initial?: MapSizing }) {
+  const [sizing, setSizing] = useState<MapSizing>(props.initial ?? "value");
+  return <PortfolioMap {...props} sizing={sizing} onSizingChange={setSizing} />;
+}
+
+function renderMap(props: Partial<MapProps> = {}, positions: PositionRollup[] = [NVDA, UNH]) {
   return render(
-    <PortfolioMap
+    <SizedMap
       rollup={rollupOf(positions)}
       names={NAMES}
       summary={SUMMARY}
@@ -184,6 +190,37 @@ describe("PortfolioMap", () => {
     expect(onTileSelect).not.toHaveBeenCalled();
   });
 
+  it("pulses only the tiles being read, staggered, and removes it for reduced motion", () => {
+    renderMap({ readingSymbols: ["UNH"] });
+
+    expect(tile("UNH")).toHaveClass("map-tile-reading");
+    expect(tile("NVDA")).not.toHaveClass("map-tile-reading");
+  });
+
+  it("resizes with motion when the sizing changes, whoever changed it", () => {
+    const props = {
+      rollup: rollupOf([NVDA, UNH]),
+      names: NAMES,
+      summary: SUMMARY,
+      tableView: <p>table view</p>,
+      tileAction: "View details.",
+      onSizingChange: () => {},
+    };
+    const { rerender } = render(<PortfolioMap {...props} sizing="value" />);
+    expect(tile("UNH")).toHaveClass("map-tile");
+    expect(tile("UNH")).not.toHaveClass("map-tile-resizing");
+
+    rerender(<PortfolioMap {...props} sizing="gain" />);
+
+    expect(tile("UNH")).toHaveClass("map-tile-resizing");
+  });
+
+  it("says when an answer changed the sizing", () => {
+    renderMap({ sizingNote: "Rundown changed this to match its answer" });
+
+    expect(screen.getByText("Rundown changed this to match its answer")).toBeInTheDocument();
+  });
+
   it("reports hover and keyboard focus on a tile", async () => {
     const user = userEvent.setup();
     const onTileHover = vi.fn();
@@ -254,7 +291,7 @@ describe("PortfolioMap", () => {
     const rollup = getRollupFixture(holdings);
     render(
       <WorkspaceProvider held={[]}>
-        <PortfolioMap
+        <SizedMap
           rollup={rollup}
           names={Object.fromEntries(holdings.map((h) => [h.position.symbol, h.name]))}
           summary={SUMMARY}

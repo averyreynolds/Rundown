@@ -4,28 +4,28 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type RefObject,
 } from "react";
 
+import {
+  INITIAL_ANSWER,
+  answerFocus,
+  answerReducer,
+  displayedSizing,
+  readAnswerEvents,
+  readingSymbols,
+  sizingNote,
+  type AnswerAction,
+  type AnswerState,
+} from "@/lib/answer-stream";
 import { matchHoldings, type HeldPosition } from "@/lib/match-holdings";
 import type { AdvisorFilingRef } from "@/lib/rundown-api";
-import type { Citation } from "@/lib/types";
-
-/** Each question stands alone, so only the latest one is ever held here. */
-export type AnswerState =
-  | { status: "idle" }
-  | { status: "asking"; question: string; filingRef: AdvisorFilingRef | null }
-  | {
-      status: "answered";
-      question: string;
-      filingRef: AdvisorFilingRef | null;
-      answer: string;
-      citations: Citation[];
-    }
-  | { status: "failed"; question: string; filingRef: AdvisorFilingRef | null; message: string };
+import type { MapSizing } from "@/lib/types";
 
 interface WorkspaceContextValue {
   held: readonly HeldPosition[];
@@ -37,10 +37,15 @@ interface WorkspaceContextValue {
   typedSymbols: readonly string[];
   answer: AnswerState;
   ask: (question: string, filingRef?: AdvisorFilingRef) => void;
+  stop: () => void;
   reset: () => void;
   hoveredSymbols: readonly string[];
   setHoveredSymbols: (symbols: readonly string[]) => void;
   focusedSymbols: readonly string[];
+  readingSymbols: readonly string[];
+  sizing: MapSizing;
+  setSizing: (sizing: MapSizing) => void;
+  sizingNote: string | null;
   selectedSymbol: string | null;
   select: (symbol: string) => void;
   clearSelection: () => void;
@@ -48,13 +53,21 @@ interface WorkspaceContextValue {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
-/** Calls the same-origin proxy (`app/api/advisor/chat/route.ts`), never the backend directly. */
-async function requestAnswer(
+/**
+ * Streams one answer into `dispatch` through the same-origin proxy
+ * (`app/api/advisor/chat/stream/route.ts`), never the backend directly.
+ * `isCurrent` turns false as soon as a newer question or Stop replaces this one,
+ * so anything still in flight from it is dropped.
+ */
+async function streamAnswer(
   question: string,
   filingRef: AdvisorFilingRef | null,
-): Promise<AnswerState> {
+  signal: AbortSignal,
+  isCurrent: () => boolean,
+  dispatch: (action: AnswerAction) => void,
+): Promise<void> {
   try {
-    const res = await fetch("/api/advisor/chat", {
+    const res = await fetch("/api/advisor/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // The backend works out which held symbols a question mentions. The typing
@@ -64,24 +77,29 @@ async function requestAnswer(
         symbols: filingRef ? [filingRef.symbol] : [],
         filingRef: filingRef ?? undefined,
       }),
+      signal,
     });
-    const body = (await res.json()) as { answer?: string; citations?: Citation[]; error?: string };
-    if (!res.ok || typeof body.answer !== "string") {
-      return {
-        status: "failed",
-        question,
-        filingRef,
-        message: body.error ?? "Rundown is temporarily unavailable.",
-      };
+
+    if (!res.ok || !res.body) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (isCurrent()) {
+        dispatch({
+          type: "failed",
+          message: body?.error ?? "Rundown is temporarily unavailable.",
+        });
+      }
+      return;
     }
-    return { status: "answered", question, filingRef, answer: body.answer, citations: body.citations ?? [] };
+
+    for await (const event of readAnswerEvents(res.body)) {
+      if (!isCurrent()) return;
+      dispatch({ type: "event", event });
+    }
+    if (isCurrent()) dispatch({ type: "streamLost" });
   } catch {
-    return {
-      status: "failed",
-      question,
-      filingRef,
-      message: "Couldn't reach Rundown. Check that the backend is running.",
-    };
+    // An abort is deliberate, and `isCurrent` is already false for one.
+    if (!isCurrent()) return;
+    dispatch({ type: "streamLost" });
   }
 }
 
@@ -93,35 +111,52 @@ export function WorkspaceProvider({
   children: React.ReactNode;
 }) {
   const [draft, setDraft] = useState("");
-  const [answer, setAnswer] = useState<AnswerState>({ status: "idle" });
+  const [answer, dispatch] = useReducer(answerReducer, INITIAL_ANSWER);
   const [hoveredSymbols, setHoveredSymbols] = useState<readonly string[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const composerRef = useRef<HTMLInputElement | null>(null);
-  const isAsking = useRef(false);
+  const currentRun = useRef<AbortController | null>(null);
+
+  const cancelCurrent = useCallback(() => {
+    currentRun.current?.abort();
+    currentRun.current = null;
+  }, []);
+
+  useEffect(() => cancelCurrent, [cancelCurrent]);
 
   const writeQuestion = useCallback((question: string) => {
     setDraft(question);
     composerRef.current?.focus();
   }, []);
 
-  const ask = useCallback((question: string, filingRef?: AdvisorFilingRef) => {
-    if (isAsking.current) return;
-    isAsking.current = true;
+  const ask = useCallback(
+    (question: string, filingRef?: AdvisorFilingRef) => {
+      cancelCurrent();
+      const run = new AbortController();
+      currentRun.current = run;
 
-    const ref = filingRef ?? null;
-    setDraft("");
-    setHoveredSymbols([]);
-    setAnswer({ status: "asking", question, filingRef: ref });
-    void requestAnswer(question, ref).then((result) => {
-      isAsking.current = false;
-      setAnswer(result);
-    });
-  }, []);
+      const ref = filingRef ?? null;
+      setDraft("");
+      setHoveredSymbols([]);
+      dispatch({ type: "start", question, filingRef: ref });
+      void streamAnswer(question, ref, run.signal, () => currentRun.current === run, dispatch);
+    },
+    [cancelCurrent],
+  );
+
+  const stop = useCallback(() => {
+    cancelCurrent();
+    dispatch({ type: "stop" });
+  }, [cancelCurrent]);
 
   const reset = useCallback(() => {
-    if (isAsking.current) return;
-    setAnswer({ status: "idle" });
+    cancelCurrent();
+    dispatch({ type: "reset" });
     setDraft("");
+  }, [cancelCurrent]);
+
+  const setSizing = useCallback((sizing: MapSizing) => {
+    dispatch({ type: "setSizing", sizing });
   }, []);
 
   const select = useCallback((symbol: string) => {
@@ -130,14 +165,8 @@ export function WorkspaceProvider({
   const clearSelection = useCallback(() => setSelectedSymbol(null), []);
 
   const typedSymbols = useMemo(() => matchHoldings(draft, held), [draft, held]);
-
-  const answerSymbols = useMemo(() => {
-    if (answer.status === "idle") return [];
-    const inQuestion = matchHoldings(answer.question, held);
-    if (answer.status !== "answered") return inQuestion;
-    const inAnswer = matchHoldings(answer.answer, held);
-    return inAnswer.length > 0 ? inAnswer : inQuestion;
-  }, [answer, held]);
+  const answerSymbols = useMemo(() => answerFocus(answer), [answer]);
+  const reading = useMemo(() => readingSymbols(answer), [answer]);
 
   const focusedSymbols = useMemo(() => {
     if (hoveredSymbols.length > 0) return hoveredSymbols;
@@ -154,10 +183,15 @@ export function WorkspaceProvider({
       typedSymbols,
       answer,
       ask,
+      stop,
       reset,
       hoveredSymbols,
       setHoveredSymbols,
       focusedSymbols,
+      readingSymbols: reading,
+      sizing: displayedSizing(answer),
+      setSizing,
+      sizingNote: sizingNote(answer),
       selectedSymbol,
       select,
       clearSelection,
@@ -169,9 +203,12 @@ export function WorkspaceProvider({
       typedSymbols,
       answer,
       ask,
+      stop,
       reset,
       hoveredSymbols,
       focusedSymbols,
+      reading,
+      setSizing,
       selectedSymbol,
       select,
       clearSelection,

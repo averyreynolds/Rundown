@@ -92,10 +92,25 @@ body {
     box-shadow 160ms ease;
 }
 
+/* In-scope tiles while Rundown reads, until the answer's first sentence. */
+.map-tile-reading {
+  animation: map-tile-read 1000ms ease-in-out infinite;
+}
+
+@keyframes map-tile-read {
+  50% {
+    opacity: 0.5;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .map-tile,
   .map-tile-resizing {
     transition: none;
+  }
+
+  .map-tile-reading {
+    animation: none;
   }
 }
 

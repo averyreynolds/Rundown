@@ -1,5 +1,4 @@
 import { GAIN_LOSS_FILL } from "./GainLossLegend";
-import type { MapSizing } from "./SizingControl";
 import {
   formatPercent,
   formatSignedCurrency,
@@ -8,10 +7,11 @@ import {
 } from "@/lib/format";
 import { gainLossStep } from "@/lib/gain-loss";
 import type { TreemapTile } from "@/lib/treemap";
-import type { PositionRollup } from "@/lib/types";
+import type { MapSizing, PositionRollup } from "@/lib/types";
 
 /** Below this width a tile's full label doesn't fit, so it shows the short one. */
 const FULL_LABEL_MIN_WIDTH = 132;
+const READING_STAGGER_MS = 70;
 const DETAILS_SIZE = 24;
 const DETAILS_INSET = 6;
 
@@ -79,6 +79,7 @@ export function MapTile({
   shareOfMeasure,
   emphasis,
   isResizing,
+  readingIndex,
   action,
   onSelect,
   onHover,
@@ -92,6 +93,8 @@ export function MapTile({
   emphasis: TileEmphasis;
   /** Whether a sizing change is in progress, the one time tiles resize with motion. */
   isResizing: boolean;
+  /** This tile's place among those an answer is reading, or `null` if it isn't one. */
+  readingIndex: number | null;
   /** What activating the tile does, read out as the end of its accessible name. */
   action: string;
   onSelect?: (symbol: string) => void;
@@ -126,10 +129,17 @@ export function MapTile({
         aria-label={accessibleName(row, name, action)}
         aria-current={emphasis === "focused" ? "true" : undefined}
         onClick={() => onSelect?.(row.symbol)}
-        style={{ left: tile.x, top: tile.y, width: tile.width, height: tile.height }}
+        style={{
+          left: tile.x,
+          top: tile.y,
+          width: tile.width,
+          height: tile.height,
+          animationDelay:
+            readingIndex === null ? undefined : `${readingIndex * READING_STAGGER_MS}ms`,
+        }}
         className={`absolute flex flex-col justify-between overflow-hidden rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink ${
           isNarrow ? "px-1.5 py-1" : "px-2.5 py-2"
-        } ${fill} ${outline} ${motion}`}
+        } ${fill} ${outline} ${motion} ${readingIndex === null ? "" : "map-tile-reading"}`}
       >
         <span
           className={`font-bold leading-[1.1] tracking-[-0.02em] ${tickerSize(shareOfMeasure)}`}

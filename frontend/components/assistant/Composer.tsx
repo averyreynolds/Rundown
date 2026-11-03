@@ -1,10 +1,11 @@
 "use client";
 
 import { useWorkspace } from "../workspace/WorkspaceProvider";
+import { isAnswerRunning } from "@/lib/answer-stream";
 
 export function Composer() {
-  const { draft, setDraft, composerRef, typedSymbols, held, answer, ask } = useWorkspace();
-  const isAsking = answer.status === "asking";
+  const { draft, setDraft, composerRef, typedSymbols, held, answer, ask, stop } = useWorkspace();
+  const isRunning = isAnswerRunning(answer);
   const question = draft.trim();
 
   const scope =
@@ -14,7 +15,8 @@ export function Composer() {
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (question && !isAsking) ask(question);
+    if (isRunning) stop();
+    else if (question) ask(question);
   }
 
   return (
@@ -36,10 +38,10 @@ export function Composer() {
           <p className="truncate font-mono text-xs text-ink-secondary">{scope}</p>
           <button
             type="submit"
-            disabled={isAsking || question.length === 0}
+            disabled={!isRunning && question.length === 0}
             className="h-10 shrink-0 rounded-full bg-ink px-5 text-sm font-medium text-white transition-colors hover:bg-ink/85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:opacity-60"
           >
-            Ask
+            {isRunning ? "Stop" : "Ask"}
           </button>
         </div>
       </div>
