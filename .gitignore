@@ -8,3 +8,7 @@
 # and .impeccable/surfaces/, which are tracked.
 .impeccable/hook.cache.json
 .impeccable/questions/
+
+# Planning docs stay local
+docs/plans/
+docs/brainstorms/
