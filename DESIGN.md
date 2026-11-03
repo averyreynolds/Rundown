@@ -196,7 +196,7 @@ A diverging scale used only as a fill behind ink text, to show change since cost
 - **Mono** (400, 0.75rem/12px, down to 11px for source lines): reading steps, source and as-of lines, tile figures.
 - **Tile ticker** (700, −0.02em tracking): 28px at 10% or more of the current measure, 20px at 5% or more, otherwise 15px.
 
-All numeric values that appear in a column or are compared across rows (currency, percentages, quantities) use `tabular-nums`. This is a hard convention for any new numeric field.
+All numeric values that appear in a column or are compared across rows (currency, percentages, quantities) use `tabular-nums`. This is a hard convention for any new numeric field. The `tabular-nums` utility also sets the mono face, because Schibsted Grotesk's tabular figures widen its punctuation (`$8 , 207 . 20`).
 
 ### Named Rules
 **The Tabular Numerals Rule.** Any number a user might scan down a column or compare across rows renders with `tabular-nums`. No numeric column may use proportional figures.
@@ -239,7 +239,7 @@ Rundown is flat by default: surfaces are distinguished by a 1px border (`--color
 
 Motion explains what the assistant is doing, and only then. Nothing animates on page load.
 
-- **Tile resizing** (800ms, `cubic-bezier(0.16, 1, 0.3, 1)`): tiles change size when the sizing mode changes, whether the user or an answer changed it.
+- **Tile resizing** (800ms, `cubic-bezier(0.16, 1, 0.3, 1)`): tiles change size when the sizing mode changes, whether the user or an answer changed it. A window resize or the first layout snaps instead.
 - **Fill and outline changes** (160–220ms, ease): focus and dimming as sentences arrive or the pointer moves.
 - **Reading pulse** (1000ms, opacity to 0.5, staggered 70ms per tile): in-scope tiles while Rundown reads.
 - **Answer headline** (360ms, 6px rise and fade): once per answer, as its first sentence is released.
@@ -280,7 +280,7 @@ Borders are uniformly 1px and low-contrast (`border-border` at rest, stepping up
 A single text input and Ask button in a `rounded-2xl`, 1px-bordered surface pinned to the bottom of the conversation. Below the input, a mono scope line shows "All 11 positions" or "About NVDA" as the user types. The input's border shifts to ink on focus, with no glow. While an answer is running, Ask becomes Stop.
 
 ### Portfolio Map (signature component)
-Tiles are real buttons with full accessible names, such as "NVDA, NVIDIA Corp. 13.1% of portfolio, +85.4% since cost. Ask about this position." Each shows a ticker and a figure in ink: weight and change since cost by value, percent of cost by cost, and signed dollars by gain or loss. Figures carry a sign and a `▲`/`▼` glyph. Clicking a tile writes a question into the composer without sending it. Focus is a 3px inset ink outline, identical on a gain or a loss. The sizing control is a three-part segmented control (Value, Cost, Gain or loss) that marks the pressed mode, with "Rundown changed this to match its answer" beside it when an answer did so.
+Tiles are real buttons with full accessible names, such as "NVDA, NVIDIA Corp. 13.1% of portfolio, +85.4% since cost. Ask about this position." Each shows a ticker and a figure in ink: weight and change since cost by value, percent of cost by cost, and signed dollars by gain or loss. Figures carry a sign and a `▲`/`▼` glyph. Narrow tiles shorten the figure (change since cost, percent of cost, or abbreviated dollars such as `+$3.8K`) and tighten their padding to 4×6px, and the exact figures stay in the accessible name. A position with no recorded cost basis says so rather than showing a gain, and takes the minimum size when sized by gain or loss. Clicking a tile writes a question into the composer without sending it. Focus is a 3px inset ink outline, identical on a gain or a loss. The sizing control is a three-part segmented control (Value, Cost, Gain or loss) that marks the pressed mode, with "Rundown changed this to match its answer" beside it when an answer did so.
 
 ### Answer
 A question bubble, then reading steps in mono, one per source, each saying what was read, its as-of time, and whether it was unavailable. Then the headline and sentences, which link to tiles in both directions on hover and keyboard focus. Sources are stated once for the answer, not per sentence, because the backend can't tie an arbitrary sentence to a source. Filing citations are the exception: they quote the source passage and link to the filing. A stopped or interrupted answer keeps its released sentences and is labeled incomplete.

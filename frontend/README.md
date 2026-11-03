@@ -49,6 +49,8 @@ Open [http://localhost:3000](http://localhost:3000).
 Every UI state can be forced from synthetic fixtures (`lib/fixtures.ts`), without a live backend connection, via a `state` query param:
 
 ```
+http://localhost:3000/?state=ready
+http://localhost:3000/?state=dense
 http://localhost:3000/?state=loading
 http://localhost:3000/?state=empty
 http://localhost:3000/?state=error

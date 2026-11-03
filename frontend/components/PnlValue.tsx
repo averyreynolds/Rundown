@@ -1,11 +1,9 @@
 import { formatSignedCurrency, formatSignedPercent } from "@/lib/format";
 
 /**
- * P&L is rendered in neutral ink with a directional glyph, never a
- * red/green wash: CLAUDE.md hard rule 1 forbids the advisor (and, by
- * extension, this UI) from reading as a buy/sell signal, and a
- * stoplight-colored gain/loss figure is exactly that kind of implicit
- * directive. See the surface brief's "Selected direction" note.
+ * P&L figures stay in ink with a sign and a directional glyph, so color is
+ * never the only signal. Any gain/loss color sits behind a figure as a fill,
+ * as on the portfolio map. See "The Gain/Loss Color Rule" in DESIGN.md.
  */
 export function PnlValue({
   dollars,

@@ -24,6 +24,25 @@ export interface PositionView {
   unrealizedPnlPercent: number | null;
 }
 
+export interface PositionRollup {
+  symbol: string;
+  quantity: number;
+  marketValue: number;
+  costBasis: number;
+  gainDollars: number;
+  gainPercent: number | null;
+  shareOfValuePct: number; // 0-100
+  shareOfCostPct: number | null;
+  shareOfNetGainPct: number | null;
+}
+
+export interface PortfolioRollup {
+  positions: PositionRollup[];
+  totalMarketValue: number;
+  totalCostBasis: number;
+  netGainDollars: number;
+}
+
 export interface AccountSummary {
   accountId: string;
   name: string;
@@ -109,4 +128,4 @@ export interface HoldingDetail {
   filing: SourcedValue<FilingMetadata> | null;
 }
 
-export type DashboardState = "ready" | "loading" | "empty" | "error" | "stale";
+export type DashboardState = "ready" | "dense" | "loading" | "empty" | "error" | "stale";

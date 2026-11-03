@@ -16,6 +16,8 @@ import type {
   FilingMetadata,
   FundamentalsSnapshot,
   NewsItem,
+  PortfolioRollup,
+  PositionRollup,
   PositionView,
   PriceHistoryWindow,
   PriceWindow,
@@ -95,6 +97,48 @@ function mapPosition(raw: RawPositionView): PositionView {
     allocationPct: Number(raw.allocation_pct),
     unrealizedPnlDollars: Number(raw.unrealized_pnl_dollars),
     unrealizedPnlPercent: raw.unrealized_pnl_percent === null ? null : Number(raw.unrealized_pnl_percent),
+  };
+}
+
+interface RawPositionRollup {
+  symbol: string;
+  quantity: number | string;
+  market_value: number | string;
+  cost_basis: number | string;
+  gain_dollars: number | string;
+  gain_percent: number | string | null;
+  share_of_value_pct: number | string;
+  share_of_cost_pct: number | string | null;
+  share_of_net_gain_pct: number | string | null;
+}
+
+function mapPositionRollup(raw: RawPositionRollup): PositionRollup {
+  return {
+    symbol: raw.symbol,
+    quantity: Number(raw.quantity),
+    marketValue: Number(raw.market_value),
+    costBasis: Number(raw.cost_basis),
+    gainDollars: Number(raw.gain_dollars),
+    gainPercent: toNumOrNull(raw.gain_percent),
+    shareOfValuePct: Number(raw.share_of_value_pct),
+    shareOfCostPct: toNumOrNull(raw.share_of_cost_pct),
+    shareOfNetGainPct: toNumOrNull(raw.share_of_net_gain_pct),
+  };
+}
+
+interface RawPortfolioRollup {
+  positions: RawPositionRollup[];
+  total_market_value: number | string;
+  total_cost_basis: number | string;
+  net_gain_dollars: number | string;
+}
+
+function mapPortfolioRollup(raw: RawPortfolioRollup): PortfolioRollup {
+  return {
+    positions: raw.positions.map(mapPositionRollup),
+    totalMarketValue: Number(raw.total_market_value),
+    totalCostBasis: Number(raw.total_cost_basis),
+    netGainDollars: Number(raw.net_gain_dollars),
   };
 }
 
@@ -205,6 +249,11 @@ export async function getAccounts(): Promise<SourcedValue<AccountSummary[]>> {
 export async function getPositions(): Promise<SourcedValue<PositionView[]>> {
   const raw = (await rundownFetch("/portfolio/positions")) as RawSourced<RawPositionView[]>;
   return mapSourcedList(raw, mapPosition);
+}
+
+export async function getRollup(): Promise<SourcedValue<PortfolioRollup>> {
+  const raw = (await rundownFetch("/portfolio/rollup")) as RawSourced<RawPortfolioRollup>;
+  return mapSourcedValue(raw, mapPortfolioRollup);
 }
 
 export async function getFundamentals(symbol: string): Promise<SourcedValue<FundamentalsSnapshot>> {

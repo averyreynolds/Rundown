@@ -1,6 +1,7 @@
 import { AdvisorPanel } from "@/components/advisor/AdvisorPanel";
 import { AdvisorProvider } from "@/components/advisor/AdvisorProvider";
 import { AdvisorTrigger } from "@/components/advisor/AdvisorTrigger";
+import { DashboardMap } from "@/components/map/DashboardMap";
 import { HoldingDetailPanel } from "@/components/holdings/HoldingDetailPanel";
 import { HoldingSelectionProvider } from "@/components/holdings/HoldingSelectionProvider";
 import { HoldingsList } from "@/components/holdings/HoldingsList";
@@ -10,14 +11,21 @@ import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
 import { LoadingSkeleton } from "@/components/states/LoadingSkeleton";
 import { loadDashboard } from "@/lib/dashboard";
-import { ACCOUNT, getHoldings, getPortfolioTotals, getPositionsFreshness } from "@/lib/fixtures";
-import type { DashboardState, HoldingDetail } from "@/lib/types";
+import { ACCOUNT, getHoldings, getPortfolioTotals, getPositionsFreshness, getRollupFixture } from "@/lib/fixtures";
+import type { DashboardState, HoldingDetail, PortfolioRollup, SourcedValue } from "@/lib/types";
 
-type PreviewState = Exclude<DashboardState, "ready">;
-
-function resolvePreviewState(raw: string | string[] | undefined): PreviewState | null {
+function resolvePreviewState(raw: string | string[] | undefined): DashboardState | null {
   const value = Array.isArray(raw) ? raw[0] : raw;
-  if (value === "loading" || value === "empty" || value === "error" || value === "stale") return value;
+  if (
+    value === "ready" ||
+    value === "dense" ||
+    value === "loading" ||
+    value === "empty" ||
+    value === "error" ||
+    value === "stale"
+  ) {
+    return value;
+  }
   return null;
 }
 
@@ -35,6 +43,25 @@ function ReadyLayout({
         <HoldingDetailPanel holdings={holdings} />
       </div>
     </HoldingSelectionProvider>
+  );
+}
+
+/** Temporary home for the map, until the workspace layout replaces this page's dashboard. */
+function PortfolioSection({
+  holdings,
+  rollup,
+}: {
+  holdings: HoldingDetail[];
+  rollup: SourcedValue<PortfolioRollup> | null;
+}) {
+  const list = <HoldingsList holdings={holdings} />;
+  if (!rollup) return <div className="mt-10">{list}</div>;
+
+  const names = Object.fromEntries(holdings.map((h) => [h.position.symbol, h.name]));
+  return (
+    <div className="mt-10 min-[901px]:h-[680px]">
+      <DashboardMap rollup={rollup} names={names} tableView={list} />
+    </div>
   );
 }
 
@@ -65,7 +92,7 @@ export default async function Home(props: PageProps<"/">) {
               account={result.account}
               freshness={result.freshness}
             />
-            <HoldingsList holdings={result.holdings} />
+            <PortfolioSection holdings={result.holdings} rollup={result.rollup} />
           </ReadyLayout>
         )}
       </main>
@@ -77,20 +104,22 @@ export default async function Home(props: PageProps<"/">) {
 }
 
 /**
- * `?state=loading|empty|error|stale` design-preview override: renders each
+ * `?state=ready|dense|loading|empty|error|stale` design-preview override: renders each
  * UI state on demand from synthetic fixtures, for design QA without a live
  * backend connection. The default (no `state` param) always uses real data.
  */
-function PreviewDashboard({ state }: { state: PreviewState }) {
-  const holdings = getHoldings(state === "stale");
+function PreviewDashboard({ state }: { state: DashboardState }) {
+  const isStale = state === "stale";
+  const hasPositions = isStale || state === "ready" || state === "dense";
+  const holdings = getHoldings(isStale, state === "dense");
   const totals = getPortfolioTotals(holdings);
-  const freshness = getPositionsFreshness(state === "stale");
+  const freshness = getPositionsFreshness(isStale);
 
   return (
     <AdvisorProvider>
       <main
         className={`mx-auto w-full max-w-[720px] flex-1 px-5 py-10 sm:px-6 sm:py-14 ${
-          state === "stale" ? "lg:max-w-[1180px]" : ""
+          hasPositions ? "lg:max-w-[1180px]" : ""
         }`}
       >
         <PageHeader />
@@ -98,15 +127,15 @@ function PreviewDashboard({ state }: { state: PreviewState }) {
         {state === "loading" && <LoadingSkeleton />}
         {state === "empty" && <EmptyState />}
         {state === "error" && <ErrorState />}
-        {state === "stale" && (
+        {hasPositions && (
           <ReadyLayout holdings={holdings}>
             <PortfolioSummary holdings={holdings} totals={totals} account={ACCOUNT} freshness={freshness} />
-            <HoldingsList holdings={holdings} />
+            <PortfolioSection holdings={holdings} rollup={getRollupFixture(holdings, isStale)} />
           </ReadyLayout>
         )}
       </main>
 
-      {state === "stale" && <AdvisorTrigger />}
+      {hasPositions && <AdvisorTrigger />}
       <AdvisorPanel />
     </AdvisorProvider>
   );

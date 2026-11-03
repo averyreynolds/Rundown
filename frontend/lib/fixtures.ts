@@ -1,4 +1,4 @@
-import type { AccountSummary, HoldingDetail, PositionView } from "./types";
+import type { AccountSummary, HoldingDetail, PortfolioRollup, PositionView, SourcedValue } from "./types";
 
 /**
  * Synthetic development fixtures standing in for the live backend
@@ -162,7 +162,7 @@ const NAMES: Record<string, string> = {
 
 const FLAGS: Record<string, string> = {
   NVDA: "That gain has made it your third-largest position — allocation has drifted well past where it started.",
-  XOM: "Filed a 10-Q on Jul 28 that hasn't been reviewed yet.",
+  XOM: "Filed a 10-Q on Jul 28.",
   UNH: "Down 31% since cost basis, alongside a guidance-cut headline this week.",
 };
 
@@ -170,8 +170,32 @@ function withStaleness(asOf: string, stale: boolean): { asOf: string; isStale: b
   return stale ? { asOf: STALE_AS_OF, isStale: true } : { asOf, isStale: false };
 }
 
-export function getHoldings(stale = false): HoldingDetail[] {
-  return RAW_POSITIONS.map((pos) => {
+/** 19 more invented positions, for checking map density at 30 positions (`?state=dense`). */
+const DENSE_PERCENTS = [12, -4, 31, 1, -18, 6, 44, -9, 3, 22, -33, 8, 0.5, 15, -2.5, 27, -12, 5, 60];
+
+function densePositions(): PositionView[] {
+  const extras = DENSE_PERCENTS.map((percent, index) => {
+    const marketValue = Math.round(2400 / (1 + index * 0.25));
+    const costBasis = Math.round(marketValue / (1 + percent / 100));
+    return {
+      symbol: `SYN${String(index + 1).padStart(2, "0")}`,
+      accountId: "demo-001",
+      quantity: 10,
+      costBasis,
+      currentPrice: marketValue / 10,
+      marketValue,
+      allocationPct: 0,
+      unrealizedPnlDollars: marketValue - costBasis,
+      unrealizedPnlPercent: ((marketValue - costBasis) / costBasis) * 100,
+    };
+  });
+  const all = [...RAW_POSITIONS, ...extras];
+  const total = all.reduce((sum, p) => sum + p.marketValue, 0);
+  return all.map((p) => ({ ...p, allocationPct: (p.marketValue / total) * 100 }));
+}
+
+export function getHoldings(stale = false, dense = false): HoldingDetail[] {
+  return (dense ? densePositions() : RAW_POSITIONS).map((pos) => {
     const flagReason = FLAGS[pos.symbol] ?? null;
 
     const fundamentals =
@@ -229,6 +253,35 @@ export function getHoldings(stale = false): HoldingDetail[] {
 export function getPositionsFreshness(stale = false): { asOf: string; source: string; isStale: boolean } {
   const { asOf, isStale } = withStaleness(POSITIONS_AS_OF, stale);
   return { asOf, isStale, source: "SnapTrade" };
+}
+
+/**
+ * The preview harness's stand-in for `GET /portfolio/rollup`. The arithmetic
+ * here only serves synthetic previews: live figures always come from the
+ * backend's `app.domain.position_rollup`.
+ */
+export function getRollupFixture(holdings: HoldingDetail[], stale = false): SourcedValue<PortfolioRollup> {
+  const totalMarketValue = holdings.reduce((sum, h) => sum + h.position.marketValue, 0);
+  const totalCostBasis = holdings.reduce((sum, h) => sum + h.position.costBasis, 0);
+  const netGainDollars = totalMarketValue - totalCostBasis;
+  const positions = holdings
+    .map(({ position: p }) => ({
+      symbol: p.symbol,
+      quantity: p.quantity,
+      marketValue: p.marketValue,
+      costBasis: p.costBasis,
+      gainDollars: p.unrealizedPnlDollars,
+      gainPercent: p.unrealizedPnlPercent,
+      shareOfValuePct: (p.marketValue / totalMarketValue) * 100,
+      shareOfCostPct: (p.costBasis / totalCostBasis) * 100,
+      shareOfNetGainPct: netGainDollars > 0 ? (p.unrealizedPnlDollars / netGainDollars) * 100 : null,
+    }))
+    .toSorted((a, b) => b.marketValue - a.marketValue);
+
+  return {
+    value: { positions, totalMarketValue, totalCostBasis, netGainDollars },
+    ...getPositionsFreshness(stale),
+  };
 }
 
 export const ACCOUNT: AccountSummary = {

@@ -63,6 +63,43 @@ body {
 }
 
 /*
+ * Schibsted Grotesk's tabular figures also widen its punctuation, turning
+ * "$8,207.20" into "$8 , 207 . 20". Numbers that need to line up use the mono
+ * face instead -- see DESIGN.md "Typography".
+ */
+.tabular-nums {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+/*
+ * Tiles refocus as an answer or the pointer moves. They only resize with motion
+ * when the sizing mode changes, never on load or when the window resizes -- see
+ * DESIGN.md "Motion".
+ */
+.map-tile {
+  transition:
+    background-color 220ms ease,
+    box-shadow 160ms ease;
+}
+
+.map-tile-resizing {
+  transition:
+    left 800ms cubic-bezier(0.16, 1, 0.3, 1),
+    top 800ms cubic-bezier(0.16, 1, 0.3, 1),
+    width 800ms cubic-bezier(0.16, 1, 0.3, 1),
+    height 800ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 220ms ease,
+    box-shadow 160ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-tile,
+  .map-tile-resizing {
+    transition: none;
+  }
+}
+
+/*
  * The allocation bar's segments grow in from zero width on mount, paired
  * with the total value's count-up (AnimatedCurrency) as the page's one
  * authored motion moment -- see DESIGN.md "Motion". `@starting-style`

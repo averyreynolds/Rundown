@@ -50,6 +50,19 @@ describe("computeColumns", () => {
     expect(computeColumns(portfolio(30), narrow).length).toBeLessThanOrEqual(maxColumns);
   });
 
+  it("doesn't strand a small position in a final column narrower than the minimum", () => {
+    const items = [
+      ...portfolio(10),
+      { symbol: "TINY", value: 500 },
+    ];
+    const bounds = { width: 720, height: 560, gap: 4 };
+    const { tiles } = layoutTreemap(computeColumns(items, bounds), measuresFrom(items), bounds);
+
+    const column = bySymbol(tiles, "TINY").column;
+    expect(tiles.filter((tile) => tile.column === column).length).toBeGreaterThan(1);
+    expect(bySymbol(tiles, "TINY").width).toBeGreaterThan(MIN_TILE_WIDTH);
+  });
+
   it("returns no columns for no positions", () => {
     expect(computeColumns([], BOUNDS)).toEqual([]);
   });

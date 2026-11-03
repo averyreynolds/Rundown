@@ -19,6 +19,19 @@ export function formatSignedCurrency(value: number): string {
   return value < 0 ? `−${formatted}` : `+${formatted}`;
 }
 
+const currencyFormatterAbbreviated = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/** For tight spaces like a small map tile, e.g. "+$3.8K". Pair it with the exact figure elsewhere. */
+export function formatSignedCurrencyAbbreviated(value: number): string {
+  const formatted = currencyFormatterAbbreviated.format(Math.abs(value));
+  return value < 0 ? `−${formatted}` : `+${formatted}`;
+}
+
 export function formatPercent(value: number, digits = 2): string {
   return `${value.toFixed(digits)}%`;
 }

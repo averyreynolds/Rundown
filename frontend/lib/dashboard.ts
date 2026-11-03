@@ -15,8 +15,9 @@ import {
   getLatestFiling,
   getNewsForSymbols,
   getPositions,
+  getRollup,
 } from "./rundown-api";
-import type { AccountSummary, HoldingDetail, PositionView } from "./types";
+import type { AccountSummary, HoldingDetail, PortfolioRollup, PositionView, SourcedValue } from "./types";
 
 export interface DashboardTotals {
   totalValue: number;
@@ -33,7 +34,15 @@ export interface DashboardFreshness {
 }
 
 export type DashboardResult =
-  | { kind: "ready"; account: AccountSummary; holdings: HoldingDetail[]; totals: DashboardTotals; freshness: DashboardFreshness }
+  | {
+      kind: "ready";
+      account: AccountSummary;
+      holdings: HoldingDetail[];
+      totals: DashboardTotals;
+      freshness: DashboardFreshness;
+      /** `null` when the rollup fetch fails: the page falls back to the holdings list. */
+      rollup: SourcedValue<PortfolioRollup> | null;
+    }
   | { kind: "empty" }
   | { kind: "error"; message: string };
 
@@ -53,12 +62,15 @@ export async function loadDashboard(): Promise<DashboardResult> {
   const positions = positionsResult.value;
   const symbols = positions.map((p) => p.symbol);
 
-  const [newsResult, companyNames, enriched] = await Promise.all([
+  // Requested only after positions resolve, so the rollup reads the positions
+  // cache that fetch just warmed instead of making a second SnapTrade call.
+  const [newsResult, companyNames, enriched, rollup] = await Promise.all([
     symbols.length > 0 ? getNewsForSymbols(symbols).catch(() => null) : Promise.resolve(null),
     symbols.length > 0
       ? getCompanyNames(symbols).catch((): Record<string, string> => ({}))
       : Promise.resolve<Record<string, string>>({}),
     Promise.all(positions.map(enrichHolding)),
+    getRollup().catch(() => null),
   ]);
 
   const newsBySymbol = new Map(newsResult?.value.map((item) => [item.symbol, item]) ?? []);
@@ -84,6 +96,7 @@ export async function loadDashboard(): Promise<DashboardResult> {
     holdings,
     totals: { totalValue, marketValue, costBasis, unrealizedPnlDollars, unrealizedPnlPercent },
     freshness: { asOf: positionsResult.asOf, source: positionsResult.source, isStale: positionsResult.isStale },
+    rollup,
   };
 }
 

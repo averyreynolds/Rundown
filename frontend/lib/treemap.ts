@@ -132,7 +132,8 @@ function bestColumnSize(
   for (let count = 1; count < rest.length; count++) {
     const column = rest.slice(0, count);
     const width = columnWidth(column, rest.length, restTotal, remainingWidth);
-    if (width < MIN_TILE_WIDTH) continue;
+    // Leaving less than a tile's width would strand the rest in a sliver of a column.
+    if (width < MIN_TILE_WIDTH || remainingWidth - width < MIN_TILE_WIDTH) continue;
 
     const columnTotal = sum(column.map((item) => item.value));
     const worstAspect = Math.max(
