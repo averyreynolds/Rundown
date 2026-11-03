@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-Next.js (React, TypeScript) frontend + Python (FastAPI) backend, as mandated by `CLAUDE.md`. Frontend is dashboard UI only and never calls a third-party data provider directly; backend owns all third-party integration, portfolio math, caching, and LLM orchestration. Not yet scaffolded — greenfield, docs-only at time of writing.
+Next.js (React, TypeScript) frontend + Python (FastAPI) backend, as mandated by `CLAUDE.md`. Frontend is dashboard UI only and never calls a third-party data provider directly; backend owns all third-party integration, portfolio math, caching, and LLM orchestration.
 
 ## Users
 
@@ -18,7 +18,7 @@ The target persona described in `README.md` — an "engaged but time-constrained
 
 ## Product Purpose
 
-Rundown connects to a real brokerage account, aggregates equity holdings, and layers fundamentals, filings analysis, and personalized news on top, with a conversational AI advisor that explains day-to-day changes and why they matter. It exists to answer one question fast: **"does this matter?"**
+Rundown connects to a real brokerage account, aggregates equity holdings, and layers fundamentals, filings analysis, and personalized news on top, with a conversational AI advisor that explains day-to-day changes and why they matter. It exists to answer one question fast: **"does this matter?"** The assistant is the product: the home screen is a conversation beside a portfolio map that reacts to what you ask, with fundamentals, filings, and news as its evidence.
 
 MVP success is defined as the end-to-end pipeline working convincingly against real data — SnapTrade holdings sync → fundamentals/filings/news enrichment → AI advisor answering grounded questions — even before it becomes a daily habit. Replacing the daily brokerage-app check-in is the longer-term bar, not the v1 gate.
 
@@ -51,7 +51,7 @@ Undecided / open: exact per-data-type cache TTLs and refresh schedule are not ye
 - Name: **Rundown**. MIT License, copyright © 2026 averyreynolds.
 - Voice demonstrated in `README.md`: plain-English, specific, non-alarmist explanations — e.g. *"Your position in X is now 18% of your portfolio, up from 11% three months ago — mostly price appreciation, not new buys."*
 - No logo or other visual brand assets exist yet.
-- Visual world: standing category-standard direction, chosen deliberately over invented worlds (newsroom-rundown, split-flap board) during the home dashboard's `shape` pass. Craft bar is consumer-fintech done well — **Robinhood, Copilot Money, Wealthfront** — not enterprise-SaaS (Linear/Stripe) or professional-terminal density (Bloomberg/Schwab). Execute the category convention at full commitment: no irony, no smuggled quirk.
+- Visual world: standing category-standard direction, chosen deliberately over invented worlds (newsroom-rundown, split-flap board) during the home dashboard's `shape` pass. Craft bar is consumer-fintech done well — **Robinhood, Copilot Money, Wealthfront** — not enterprise-SaaS (Linear/Stripe) or professional-terminal density (Bloomberg/Schwab). Execute the category convention at full commitment: no irony, no smuggled quirk. The Living Map layout chosen on 2026-11-02 changes the structure from dashboard to assistant, not this register.
 
 ## Evidence on Hand
 
