@@ -54,9 +54,15 @@ from app.cache.cache_repository import CacheRepository
 from app.cache.ttl_policy import positions_ttl_seconds
 from app.domain.allocation import compute_allocation
 from app.domain.pnl import compute_pnl
+from app.domain.position_rollup import roll_up_positions
 from app.domain.types import Holding
 from app.schemas.common import SourcedValue
-from app.schemas.portfolio import AccountSummary, PositionView
+from app.schemas.portfolio import (
+    AccountSummary,
+    PortfolioRollupView,
+    PositionRollupView,
+    PositionView,
+)
 from app.services.cache_through import CachedResult, fetch_with_cache
 from app.services.errors import ProviderFetchError
 
@@ -248,6 +254,51 @@ class SnapTradeService:
         ]
 
         return SourcedValue(value=views, source=_SOURCE_NAME, as_of=as_of, is_stale=is_stale)
+
+    async def get_rollup(self) -> SourcedValue[PortfolioRollupView]:
+        """Return positions merged by symbol, with each symbol's shares of the portfolio.
+
+        Built on `list_positions`, so it shares that method's cache, provenance,
+        and stale labeling, and adds no provider calls of its own.
+
+        Raises:
+            ProviderUnavailableError: SnapTrade is failing and nothing is cached.
+        """
+        positions = await self.list_positions()
+        rollup = roll_up_positions(
+            [
+                Holding(
+                    symbol=position.symbol,
+                    quantity=position.quantity,
+                    cost_basis=position.cost_basis,
+                    current_price=position.current_price,
+                    market_value=position.market_value,
+                )
+                for position in positions.value
+            ]
+        )
+        view = PortfolioRollupView(
+            positions=[
+                PositionRollupView(
+                    symbol=row.symbol,
+                    quantity=row.quantity,
+                    market_value=row.market_value,
+                    cost_basis=row.cost_basis,
+                    gain_dollars=row.gain_dollars,
+                    gain_percent=row.gain_percent,
+                    share_of_value_pct=row.share_of_value_pct,
+                    share_of_cost_pct=row.share_of_cost_pct,
+                    share_of_net_gain_pct=row.share_of_net_gain_pct,
+                )
+                for row in rollup.positions
+            ],
+            total_market_value=rollup.total_market_value,
+            total_cost_basis=rollup.total_cost_basis,
+            net_gain_dollars=rollup.net_gain_dollars,
+        )
+        return SourcedValue(
+            value=view, source=positions.source, as_of=positions.as_of, is_stale=positions.is_stale
+        )
 
     async def _fetch_accounts(self) -> CachedResult:
         return await fetch_with_cache(
